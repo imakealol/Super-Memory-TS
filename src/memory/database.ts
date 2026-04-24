@@ -60,8 +60,30 @@ export class MemoryDatabase {
   private uri: string;
   private initialized: boolean = false;
 
+  /**
+   * Write queue to serialize LanceDB writes and prevent commit conflicts.
+   * LanceDB only allows one writer at a time, so concurrent addMemory calls
+   * from multiple file indexings cause "Commit conflict for version X" errors.
+   */
+  private writeQueue: Promise<void> = Promise.resolve();
+
   constructor(uri: string = './memory_data') {
     this.uri = uri;
+  }
+
+  /**
+   * Execute a write operation sequentially through the queue.
+   * All writes (addMemory, deleteMemory, etc.) must go through this.
+   */
+  private async enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
+    const queuedWrite = this.writeQueue.then(async () => {
+      return operation();
+    });
+
+    // Update queue to chain this write (even if it fails, we move on)
+    this.writeQueue = queuedWrite.then(() => {}).catch(() => {});
+
+    return queuedWrite;
   }
 
   /**
@@ -220,36 +242,38 @@ export class MemoryDatabase {
    * @returns The ID of the newly created memory
    */
   async addMemory(input: MemoryEntryInput): Promise<string> {
-    const memoryTable = this.getTable();
+    return this.enqueueWrite(async () => {
+      const memoryTable = this.getTable();
 
-    const id = randomUUID();
-    const timestamp = Date.now();
-    const contentHash = await sha256(input.text);
+      const id = randomUUID();
+      const timestamp = Date.now();
+      const contentHash = await sha256(input.text);
 
-    // Ensure vector is a regular array for LanceDB compatibility
-    const vectorArray = Array.isArray(input.vector)
-      ? input.vector
-      : Array.from(input.vector);
+      // Ensure vector is a regular array for LanceDB compatibility
+      const vectorArray = Array.isArray(input.vector)
+        ? input.vector
+        : Array.from(input.vector);
 
-    const entry = {
-      id,
-      text: input.text,
-      vector: vectorArray,
-      sourceType: input.sourceType,
-      sourcePath: input.sourcePath ?? '',
-      timestamp,
-      contentHash,
-      metadataJson: input.metadataJson ?? '',
-      sessionId: input.sessionId ?? '',
-    };
+      const entry = {
+        id,
+        text: input.text,
+        vector: vectorArray,
+        sourceType: input.sourceType,
+        sourcePath: input.sourcePath ?? '',
+        timestamp,
+        contentHash,
+        metadataJson: input.metadataJson ?? '',
+        sessionId: input.sessionId ?? '',
+      };
 
-    await memoryTable.add([entry]);
+      await memoryTable.add([entry]);
 
-    // Try to create index after first data insertion
-    // This is safe because table now has data
-    await this.ensureIndex();
+      // Try to create index after first data insertion
+      // This is safe because table now has data
+      await this.ensureIndex();
 
-    return id;
+      return id;
+    });
   }
 
   /**
@@ -275,9 +299,10 @@ export class MemoryDatabase {
    * Delete a memory entry by ID
    */
   async deleteMemory(id: string): Promise<void> {
-    const memoryTable = this.getTable();
-
-    await memoryTable.delete(`id = '${id}'`);
+    return this.enqueueWrite(async () => {
+      const memoryTable = this.getTable();
+      await memoryTable.delete(`id = '${id}'`);
+    });
   }
 
   /**
@@ -452,32 +477,34 @@ export class MemoryDatabase {
    * Store model metadata in the database
    */
   async storeModelMetadata(modelId: string, dimensions: number): Promise<void> {
-    const db = connections.get(this.uri);
-    if (!db) return;
+    return this.enqueueWrite(async () => {
+      const db = connections.get(this.uri);
+      if (!db) return;
 
-    // Create metadata table if it doesn't exist
-    const tableNames = await db.tableNames();
-    if (!tableNames.includes(MODEL_METADATA_TABLE)) {
-      await db.createTable(MODEL_METADATA_TABLE, [
-        {
-          key: 'current',
-          modelId,
-          dimensions,
-          createdAt: Date.now(),
-        },
-      ]);
-    } else {
-      // Update existing metadata using SQL WHERE clause
-      const metaTable = await db.openTable(MODEL_METADATA_TABLE);
-      await metaTable.update({
-        values: {
-          modelId,
-          dimensions,
-          createdAt: Date.now(),
-        },
-        where: `key = 'current'`,
-      });
-    }
+      // Create metadata table if it doesn't exist
+      const tableNames = await db.tableNames();
+      if (!tableNames.includes(MODEL_METADATA_TABLE)) {
+        await db.createTable(MODEL_METADATA_TABLE, [
+          {
+            key: 'current',
+            modelId,
+            dimensions,
+            createdAt: Date.now(),
+          },
+        ]);
+      } else {
+        // Update existing metadata using SQL WHERE clause
+        const metaTable = await db.openTable(MODEL_METADATA_TABLE);
+        await metaTable.update({
+          values: {
+            modelId,
+            dimensions,
+            createdAt: Date.now(),
+          },
+          where: `key = 'current'`,
+        });
+      }
+    });
   }
 
   /**
