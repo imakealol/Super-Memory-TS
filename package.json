@@ -1,6 +1,6 @@
 {
   "name": "@veedubin/super-memory-ts",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Super-Memory MCP server with local embeddings and vector search",
   "license": "MIT",
   "repository": {
@@ -11,12 +11,12 @@
   "bugs": {
     "url": "https://github.com/Veedubin/Super-Memory-TS/issues"
   },
-  "files": ["dist/", "package.json", "README.md", "LICENSE"],
+  "files": ["dist/", "bin/", "package.json", "README.md", "LICENSE"],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "super-memory-ts": "dist/index.js"
+    "super-memory-ts": "./bin/super-memory-ts.js"
   },
   "scripts": {
     "build": "tsc",

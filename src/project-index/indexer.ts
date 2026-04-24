@@ -84,6 +84,10 @@ export class ProjectIndexer extends EventEmitter {
   private pendingChunks: MemoryEntryInput[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
 
+  // Memory warning cooldown to reduce log spam
+  private lastMemoryWarning = 0;
+  private readonly MEMORY_WARNING_COOLDOWN_MS = 5000; // Only warn every 5 seconds
+
   // Flush threshold - flush when buffer reaches this size
   private static readonly FLUSH_THRESHOLD = 50;
   // Flush interval in ms
@@ -352,7 +356,11 @@ export class ProjectIndexer extends EventEmitter {
       const memUsage = process.memoryUsage();
       const heapUsageRatio = memUsage.heapUsed / memUsage.heapTotal;
       if (heapUsageRatio > MEMORY_THRESHOLD) {
-        logger.warn(`Memory pressure high (${(heapUsageRatio * 100).toFixed(0)}%), forcing buffer flush`);
+        const now = Date.now();
+        if (now - this.lastMemoryWarning > this.MEMORY_WARNING_COOLDOWN_MS) {
+          logger.warn(`Memory pressure high (${(heapUsageRatio * 100).toFixed(0)}%), forcing buffer flush`);
+          this.lastMemoryWarning = now;
+        }
         await this.flushPendingChunks();
       }
 
