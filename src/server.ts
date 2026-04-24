@@ -567,7 +567,7 @@ export class SuperMemoryServer {
       try {
         if (this.config.indexer) {
           this.context.indexer = new ProjectIndexer({
-            rootPath: process.cwd(),
+            rootPath: process.env.BOOMERANG_ROOT_PATH || process.cwd(),
             includePatterns: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.py', '**/*.md'],
             excludePatterns: this.config.indexer.excludePatterns,
             chunkSize: this.config.indexer.chunkSize,
