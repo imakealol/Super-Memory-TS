@@ -4,8 +4,11 @@
  * Supports loading from environment variables and JSON config files.
  */
 
-import { readFile } from 'fs/promises';
-import { resolve } from 'path';
+import os from 'os';
+import fs from 'fs';
+import { readFile, writeFile, mkdir } from 'fs/promises';
+import { resolve, join } from 'path';
+import { logger } from './utils/logger.js';
 
 // ==================== Types ====================
 
@@ -17,6 +20,7 @@ export interface Config {
   database: DatabaseConfig;
   indexer: IndexerConfig;
   logging: LoggingConfig;
+  performance: PerformanceConfig;
 }
 
 export interface ModelConfig {
@@ -43,9 +47,27 @@ export interface LoggingConfig {
   level: 'debug' | 'info' | 'warn' | 'error';
 }
 
+export interface PerformanceConfig {
+  workers: number;
+  maxHeapMB: number;
+  flushIntervalMs: number;
+  flushThreshold: number;
+  memoryThreshold: number;
+  maxBufferBytes: number;
+  indexOnStartup: boolean;
+}
+
 // ==================== Constants ====================
 
-const CONFIG_FILE_NAME = 'super-memory.json';
+const DEFAULT_PERFORMANCE_CONFIG: PerformanceConfig = {
+  workers: os.cpus().length,
+  maxHeapMB: 8192,
+  flushIntervalMs: 50,
+  flushThreshold: 10,
+  memoryThreshold: 0.70,
+  maxBufferBytes: 50 * 1024 * 1024, // 50MB
+  indexOnStartup: true,
+};
 
 const DEFAULT_CONFIG: Config = {
   model: {
@@ -68,7 +90,71 @@ const DEFAULT_CONFIG: Config = {
   logging: {
     level: 'info',
   },
+  performance: DEFAULT_PERFORMANCE_CONFIG,
 };
+
+// ==================== Performance Config Path ====================
+
+/**
+ * Get the config file path respecting XDG_CONFIG_HOME
+ * Returns ~/.config/super-memory-ts/config.json
+ */
+export function getConfigPath(): string {
+  const xdgConfigHome = process.env.XDG_CONFIG_HOME;
+  const configHome = xdgConfigHome || join(os.homedir(), '.config');
+  return resolve(configHome, 'super-memory-ts', 'config.json');
+}
+
+// ==================== Performance Config Validation ====================
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+export interface PerformanceValidationResult {
+  valid: boolean;
+  warnings: string[];
+}
+
+function validatePerformanceConfig(config: PerformanceConfig): PerformanceValidationResult {
+  const warnings: string[] = [];
+  
+  const cpuCount = os.cpus().length;
+  
+  if (config.workers < 1 || config.workers > cpuCount * 2) {
+    warnings.push(`workers must be between 1 and ${cpuCount * 2}, clamping to valid range`);
+    config.workers = clamp(config.workers, 1, cpuCount * 2);
+  }
+  
+  if (config.maxHeapMB < 512 || config.maxHeapMB > 65536) {
+    warnings.push(`maxHeapMB must be between 512 and 65536, clamping to valid range`);
+    config.maxHeapMB = clamp(config.maxHeapMB, 512, 65536);
+  }
+  
+  if (config.flushIntervalMs < 10 || config.flushIntervalMs > 60000) {
+    warnings.push(`flushIntervalMs must be between 10 and 60000, clamping to valid range`);
+    config.flushIntervalMs = clamp(config.flushIntervalMs, 10, 60000);
+  }
+  
+  if (config.flushThreshold < 1 || config.flushThreshold > 500) {
+    warnings.push(`flushThreshold must be between 1 and 500, clamping to valid range`);
+    config.flushThreshold = clamp(config.flushThreshold, 1, 500);
+  }
+  
+  if (config.memoryThreshold < 0.1 || config.memoryThreshold > 0.99) {
+    warnings.push(`memoryThreshold must be between 0.1 and 0.99, clamping to valid range`);
+    config.memoryThreshold = clamp(config.memoryThreshold, 0.1, 0.99);
+  }
+  
+  const minBuffer = 1024 * 1024; // 1MB
+  const maxBuffer = 1024 * 1024 * 1024; // 1GB
+  if (config.maxBufferBytes < minBuffer || config.maxBufferBytes > maxBuffer) {
+    warnings.push(`maxBufferBytes must be between 1MB and 1GB, clamping to valid range`);
+    config.maxBufferBytes = clamp(config.maxBufferBytes, minBuffer, maxBuffer);
+  }
+  
+  return { valid: true, warnings };
+}
 
 // ==================== Environment Variable Names ====================
 
@@ -198,6 +284,15 @@ async function loadJsonConfig(configPath: string): Promise<Partial<Config>> {
       logging: json.logging ? {
         level: json.logging.level || DEFAULT_CONFIG.logging.level,
       } : undefined,
+      performance: json.performance ? {
+        workers: json.performance.workers ?? DEFAULT_CONFIG.performance.workers,
+        maxHeapMB: json.performance.maxHeapMB ?? DEFAULT_CONFIG.performance.maxHeapMB,
+        flushIntervalMs: json.performance.flushIntervalMs ?? DEFAULT_CONFIG.performance.flushIntervalMs,
+        flushThreshold: json.performance.flushThreshold ?? DEFAULT_CONFIG.performance.flushThreshold,
+        memoryThreshold: json.performance.memoryThreshold ?? DEFAULT_CONFIG.performance.memoryThreshold,
+        maxBufferBytes: json.performance.maxBufferBytes ?? DEFAULT_CONFIG.performance.maxBufferBytes,
+        indexOnStartup: json.performance.indexOnStartup ?? DEFAULT_CONFIG.performance.indexOnStartup,
+      } : undefined,
     };
   } catch {
     // Config file doesn't exist or is invalid - use defaults
@@ -223,18 +318,37 @@ function deepMerge<T>(target: T, source: Partial<T>): T {
 }
 
 /**
+ * Write config atomically by writing to a temp file first then renaming
+ */
+async function writeConfigAtomic(configPath: string, config: Config): Promise<void> {
+  const configDir = resolve(configPath, '..');
+  
+  // Ensure directory exists
+  await mkdir(configDir, { recursive: true });
+  
+  // Write to temp file first
+  const tmpPath = `${configPath}.tmp.${Date.now()}`;
+  await writeFile(tmpPath, JSON.stringify(config, null, 2), 'utf-8');
+  
+  // Atomic rename
+  fs.renameSync(tmpPath, configPath);
+}
+
+/**
  * Load configuration from environment variables and optional JSON config file
  * 
  * Priority (highest to lowest):
  * 1. Environment variables
  * 2. JSON config file
  * 3. Default values
+ * 
+ * If config file doesn't exist, creates one with defaults.
  */
 export async function loadConfig(configPath?: string): Promise<Config> {
+  const targetPath = configPath || getConfigPath();
+  
   // Try to load from JSON config file first (lowest priority)
-  const jsonConfig = configPath 
-    ? await loadJsonConfig(configPath) 
-    : await loadJsonConfig(CONFIG_FILE_NAME);
+  const jsonConfig = await loadJsonConfig(targetPath);
   
   // Environment variables override JSON config (medium priority)
   const envConfig = parseEnvConfig();
@@ -243,11 +357,25 @@ export async function loadConfig(configPath?: string): Promise<Config> {
   let config = deepMerge(DEFAULT_CONFIG, jsonConfig);
   config = deepMerge(config, envConfig);
   
+  // Validate and clamp performance settings
+  const perfValidation = validatePerformanceConfig(config.performance);
+  if (perfValidation.warnings.length > 0) {
+    logger.warn('Performance config warnings:', perfValidation.warnings);
+  }
+  
+  // Auto-create config file if it doesn't exist
+  const configExists = await fs.promises.access(targetPath).then(() => true).catch(() => false);
+  if (!configExists) {
+    await writeConfigAtomic(targetPath, config);
+    logger.info(`Created default config at ${targetPath}`);
+  }
+  
   return config;
 }
 
 /**
  * Synchronous config load (uses defaults and env vars only, no JSON file)
+ * Does NOT auto-create config file.
  */
 export function loadConfigSync(configPath?: string): Config {
   const envConfig = parseEnvConfig();

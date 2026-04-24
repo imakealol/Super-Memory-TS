@@ -15,7 +15,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { loadConfigSync, validateConfig } from './config.js';
+import { loadConfigSync, validateConfig, type Config } from './config.js';
 import { ModelManager } from './model/index.js';
 import { MemorySystem, getMemorySystem } from './memory/index.js';
 import { ProjectIndexer } from './project-index/indexer.js';
@@ -188,13 +188,13 @@ export class SuperMemoryServer {
     memory: MemorySystem;
     indexer: ProjectIndexer | null;
   };
-  private config: ReturnType<typeof loadConfigSync>;
+  private config: Config;
   private initialized: boolean = false;
   private initError: Error | null = null;
   private transportConnected: boolean = false;
 
-  constructor() {
-    this.config = loadConfigSync();
+  constructor(config?: Config) {
+    this.config = config || loadConfigSync();
 
     // Validate config
     const validation = validateConfig(this.config);
@@ -613,6 +613,11 @@ export class SuperMemoryServer {
             chunkSize: this.config.indexer.chunkSize,
             chunkOverlap: this.config.indexer.chunkOverlap,
             maxFileSize: this.config.indexer.maxFileSize,
+            workers: this.config.performance?.workers,
+            flushIntervalMs: this.config.performance?.flushIntervalMs,
+            flushThreshold: this.config.performance?.flushThreshold,
+            memoryThreshold: this.config.performance?.memoryThreshold,
+            maxBufferBytes: this.config.performance?.maxBufferBytes,
           });
 
           // Start the indexer in background - don't fail server startup

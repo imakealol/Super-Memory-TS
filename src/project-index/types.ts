@@ -25,6 +25,26 @@ export interface ProjectIndexConfig {
   maxFileSize: number;
   chunkSize: number;
   chunkOverlap: number;
+  // Performance config (optional)
+  workers?: number;
+  flushIntervalMs?: number;
+  flushThreshold?: number;
+  memoryThreshold?: number;
+  maxBufferBytes?: number;
+}
+
+export interface ProjectIndexConfigInternal {
+  rootPath: string;
+  includePatterns: string[];
+  excludePatterns: string[];
+  maxFileSize: number;
+  chunkSize: number;
+  chunkOverlap: number;
+  workers: number;
+  flushIntervalMs: number;
+  flushThreshold: number;
+  memoryThreshold: number;
+  maxBufferBytes: number;
 }
 
 // ==================== File Events ====================

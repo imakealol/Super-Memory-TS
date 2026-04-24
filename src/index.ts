@@ -17,6 +17,7 @@ import path from 'path';
 process.env.TRANSFORMERS_CACHE = path.join(os.homedir(), '.cache', 'transformers');
 
 import { SuperMemoryServer } from './server.js';
+import { loadConfig } from './config.js';
 import { logger } from './utils/logger.js';
 
 let server: SuperMemoryServer | null = null;
@@ -27,7 +28,9 @@ let isShuttingDown = false;
  */
 async function main(): Promise<void> {
   try {
-    server = new SuperMemoryServer();
+    // Load config async to enable performance settings
+    const config = await loadConfig();
+    server = new SuperMemoryServer(config);
     await server.start();
   } catch (error) {
     logger.error('Failed to start server', error);

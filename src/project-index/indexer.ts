@@ -8,6 +8,7 @@
  * - HNSW index for fast search
  */
 
+import os from 'os';
 import { readFile, stat } from 'fs/promises';
 import { createHash } from 'crypto';
 import { EventEmitter } from 'events';
@@ -20,6 +21,7 @@ import { MemoryDatabase, getDatabase, type MemoryEntryInput } from '../memory/da
 import { FileTracker } from './file-tracker.js';
 import type {
   ProjectIndexConfig,
+  ProjectIndexConfigInternal,
   ProjectChunk,
   FileEvent,
   ProjectSearchOptions,
@@ -33,8 +35,11 @@ const SKIP_DIRS = new Set(['lancedb', 'node_modules', '.git', 'dist', 'build', '
 
 // Memory management constants
 const MAX_FILE_SIZE_MB = 5; // Skip files larger than 5MB
-const MAX_BUFFER_SIZE = 50; // Max chunks in memory before forced flush
-const MEMORY_THRESHOLD = 0.85; // Force flush if heap usage exceeds 85%
+const DEFAULT_MEMORY_THRESHOLD = 0.85; // Force flush if heap usage exceeds 85%
+
+const DEFAULT_FLUSH_THRESHOLD = 50;
+const DEFAULT_FLUSH_INTERVAL_MS = 100;
+const DEFAULT_MAX_BUFFER_BYTES = 50 * 1024 * 1024; // 50MB
 
 /**
  * Check if a file should be skipped based on extension or directory
@@ -49,27 +54,11 @@ function shouldSkipFile(filePath: string): boolean {
   return false;
 }
 
-// Default configuration
-const DEFAULT_CONFIG: Required<ProjectIndexConfig> = {
-  rootPath: '.',
-  includePatterns: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.py', '**/*.md'],
-  excludePatterns: [
-    '**/node_modules/**',
-    '**/.git/**',
-    '**/dist/**',
-    '**/*.log',
-    '**/.cache/**',
-  ],
-  maxFileSize: 1024 * 1024, // 1MB
-  chunkSize: 512,
-  chunkOverlap: 50,
-};
-
 /**
  * ProjectIndexer - indexes project files for semantic search
  */
 export class ProjectIndexer extends EventEmitter {
-  private config: Required<ProjectIndexConfig>;
+  private config: ProjectIndexConfigInternal;
   private watcher: ProjectWatcher | null = null;
   private chunker: FileChunker;
   private db: MemoryDatabase;
@@ -83,32 +72,38 @@ export class ProjectIndexer extends EventEmitter {
   // In-memory buffer for batch writes
   private pendingChunks: MemoryEntryInput[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
+  private currentBufferBytes: number = 0;
 
   // Memory warning cooldown to reduce log spam
   private lastMemoryWarning = 0;
   private readonly MEMORY_WARNING_COOLDOWN_MS = 5000; // Only warn every 5 seconds
 
-  // Flush threshold - flush when buffer reaches this size
-  private static readonly FLUSH_THRESHOLD = 50;
-  // Flush interval in ms
-  private static readonly FLUSH_INTERVAL_MS = 100;
-
   constructor(config: ProjectIndexConfig, db?: MemoryDatabase, dbUri?: string) {
     super();
     
-    // Merge config with defaults
+    // Build internal config with all required fields
+    const cpuCount = os.cpus().length;
     this.config = {
-      rootPath: config.rootPath || DEFAULT_CONFIG.rootPath,
+      rootPath: config.rootPath || '.',
       includePatterns: config.includePatterns?.length 
         ? config.includePatterns 
-        : DEFAULT_CONFIG.includePatterns,
+        : ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.py', '**/*.md'],
       excludePatterns: [
-        ...DEFAULT_CONFIG.excludePatterns,
+        '**/node_modules/**',
+        '**/.git/**',
+        '**/dist/**',
+        '**/*.log',
+        '**/.cache/**',
         ...(config.excludePatterns || []),
       ],
-      maxFileSize: config.maxFileSize || DEFAULT_CONFIG.maxFileSize,
-      chunkSize: config.chunkSize || DEFAULT_CONFIG.chunkSize,
-      chunkOverlap: config.chunkOverlap || DEFAULT_CONFIG.chunkOverlap,
+      maxFileSize: config.maxFileSize || 1024 * 1024,
+      chunkSize: config.chunkSize || 512,
+      chunkOverlap: config.chunkOverlap || 50,
+      workers: config.workers ?? cpuCount,
+      flushIntervalMs: config.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS,
+      flushThreshold: config.flushThreshold ?? DEFAULT_FLUSH_THRESHOLD,
+      memoryThreshold: config.memoryThreshold ?? DEFAULT_MEMORY_THRESHOLD,
+      maxBufferBytes: config.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES,
     };
     
     // Use provided database, or shared singleton from getDatabase()
@@ -355,7 +350,7 @@ export class ProjectIndexer extends EventEmitter {
       // Check memory pressure before processing
       const memUsage = process.memoryUsage();
       const heapUsageRatio = memUsage.heapUsed / memUsage.heapTotal;
-      if (heapUsageRatio > MEMORY_THRESHOLD) {
+      if (heapUsageRatio > this.config.memoryThreshold) {
         const now = Date.now();
         if (now - this.lastMemoryWarning > this.MEMORY_WARNING_COOLDOWN_MS) {
           logger.warn(`Memory pressure high (${(heapUsageRatio * 100).toFixed(0)}%), forcing buffer flush`);
@@ -411,8 +406,15 @@ export class ProjectIndexer extends EventEmitter {
 
         // Queue chunk to buffer (embedding will be generated during flush)
         // Check buffer size limit to prevent OOM
-        if (this.pendingChunks.length >= MAX_BUFFER_SIZE) {
-          logger.debug(`Buffer full (${MAX_BUFFER_SIZE}), forcing flush before adding more chunks`);
+if (this.pendingChunks.length >= this.config.flushThreshold) {
+          logger.debug(`Buffer full (${this.config.flushThreshold}), forcing flush before adding more chunks`);
+          await this.flushPendingChunks();
+        }
+
+        // Check buffer bytes limit to prevent OOM
+        const chunkSize = Buffer.byteLength(JSON.stringify(chunkMetadata), 'utf8');
+        if (this.currentBufferBytes + chunkSize > this.config.maxBufferBytes) {
+          logger.debug(`Buffer bytes limit reached (${this.currentBufferBytes + chunkSize} > ${this.config.maxBufferBytes}), forcing flush before adding more chunks`);
           await this.flushPendingChunks();
         }
 
@@ -422,6 +424,9 @@ export class ProjectIndexer extends EventEmitter {
           sourcePath: filePath,
           metadataJson: JSON.stringify(chunkMetadata),
         });
+        
+        // Track buffer bytes
+        this.currentBufferBytes += chunkSize;
       }
 
       // Schedule a flush if needed
@@ -535,7 +540,7 @@ export class ProjectIndexer extends EventEmitter {
    */
   private scheduleFlush(): void {
     // If buffer exceeds threshold, flush immediately
-    if (this.pendingChunks.length >= ProjectIndexer.FLUSH_THRESHOLD) {
+    if (this.pendingChunks.length >= this.config.flushThreshold) {
       this.flushPendingChunks().catch(err => {
         logger.error('Flush failed', { error: err.message });
       });
@@ -549,7 +554,7 @@ export class ProjectIndexer extends EventEmitter {
       this.flushPendingChunks().catch(err => {
         logger.error('Flush failed', { error: err.message });
       });
-    }, ProjectIndexer.FLUSH_INTERVAL_MS);
+    }, this.config.flushIntervalMs);
   }
 
   /**
@@ -563,9 +568,11 @@ export class ProjectIndexer extends EventEmitter {
 
     // Take all pending chunks
     const chunks = this.pendingChunks.splice(0);
+    const byteCount = this.currentBufferBytes;
+    this.currentBufferBytes = 0;
     this.flushTimer = null;
 
-    logger.debug(`Flushing ${chunks.length} chunks to database`);
+    logger.debug(`Flushing ${chunks.length} chunks (${byteCount} bytes) to database`);
 
     try {
       await this.db.addMemories(chunks);
@@ -576,6 +583,10 @@ export class ProjectIndexer extends EventEmitter {
         error: error instanceof Error ? error.message : String(error)
       });
       this.pendingChunks.unshift(...chunks);
+      // Re-calculate bytes for re-queued chunks
+      for (const chunk of chunks) {
+        this.currentBufferBytes += JSON.stringify(chunk).length;
+      }
       // Schedule another flush attempt
       this.scheduleFlush();
     }
