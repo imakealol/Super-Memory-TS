@@ -99,7 +99,7 @@ export class MemoryDatabase {
           vector: Array(embeddingDim).fill(0),
           sourceType: 'session',
           sourcePath: '',
-          timestamp: new Date(),
+          timestamp: Date.now(),
           contentHash: '',
           metadataJson: '',
           sessionId: '',
@@ -136,7 +136,7 @@ export class MemoryDatabase {
             vector: Array(embeddingDim).fill(0),
             sourceType: 'session',
             sourcePath: '',
-            timestamp: new Date(),
+            timestamp: Date.now(),
             contentHash: '',
             metadataJson: '',
             sessionId: '',
@@ -214,7 +214,7 @@ export class MemoryDatabase {
     const memoryTable = this.getTable();
 
     const id = randomUUID();
-    const timestamp = new Date();
+    const timestamp = Date.now();
     const contentHash = await sha256(input.text);
 
     // Ensure vector is a regular array for LanceDB compatibility
@@ -439,7 +439,7 @@ export class MemoryDatabase {
           key: 'current',
           modelId,
           dimensions,
-          createdAt: new Date(),
+          createdAt: Date.now(),
         },
       ]);
     } else {
@@ -449,7 +449,7 @@ export class MemoryDatabase {
         values: {
           modelId,
           dimensions,
-          createdAt: new Date(),
+          createdAt: Date.now(),
         },
         where: `key = 'current'`,
       });
