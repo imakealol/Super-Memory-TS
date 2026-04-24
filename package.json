@@ -1,0 +1,40 @@
+{
+  "name": "@veedubin/super-memory-ts",
+  "version": "1.0.0",
+  "description": "Super-Memory MCP server with local embeddings and vector search",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Veedubin/Super-Memory-TS.git"
+  },
+  "files": ["dist/", "package.json", "README.md", "LICENSE"],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "bun test",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@lancedb/lancedb": "^0.11.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@xenova/transformers": "^2.17.1",
+    "chokidar": "^4.0.0",
+    "fuse.js": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "eslint": "^9.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.5"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

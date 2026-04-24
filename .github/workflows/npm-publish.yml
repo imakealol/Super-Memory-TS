@@ -1,0 +1,58 @@
+name: Publish NPM Package
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Required for npm provenance
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Validate tag format
+        run: |
+          TAG="${{ github.ref_name }}"
+          echo "Tag: $TAG"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: Invalid tag format. Expected v*.*.* (e.g., v1.2.3)"
+            exit 1
+          fi
+          echo "Tag format validated"
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+          scope: '@veedubin'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run typecheck
+        run: npm run typecheck || npm run build -- --noEmit
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify dist exists
+        run: |
+          if [ ! -d "dist" ]; then
+            echo "ERROR: dist directory not found after build"
+            exit 1
+          fi
+          echo "Build output verified"
+
+      - name: Publish to NPM with provenance
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
