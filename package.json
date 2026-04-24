@@ -5,7 +5,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Veedubin/Super-Memory-TS.git"
+    "url": "https://github.com/Veedubin/Super-Memory-TS.git"
+  },
+  "homepage": "https://github.com/Veedubin/Super-Memory-TS#readme",
+  "bugs": {
+    "url": "https://github.com/Veedubin/Super-Memory-TS/issues"
   },
   "files": ["dist/", "package.json", "README.md", "LICENSE"],
   "type": "module",
