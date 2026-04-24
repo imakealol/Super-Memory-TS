@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Super-Memory MCP Server
  * 
@@ -8,6 +9,12 @@
  *   npx tsx src/index.ts
  *   node dist/index.js
  */
+
+import os from 'os';
+import path from 'path';
+
+// Set transformers cache to user home to avoid permission issues in global installs
+process.env.TRANSFORMERS_CACHE = path.join(os.homedir(), '.cache', 'transformers');
 
 import { SuperMemoryServer } from './server.js';
 import { logger } from './utils/logger.js';
