@@ -11,11 +11,12 @@
 import { readFile, stat } from 'fs/promises';
 import { createHash } from 'crypto';
 import { EventEmitter } from 'events';
+import { extname, sep } from 'path';
 import { logger } from '../utils/logger.js';
 import { ProjectWatcher, createWatcher } from './watcher.js';
 import { FileChunker, createChunker } from './chunker.js';
 import { generateEmbeddings } from '../model/embeddings.js';
-import { MemoryDatabase, getDatabase } from '../memory/database.js';
+import { MemoryDatabase, getDatabase, type MemoryEntryInput } from '../memory/database.js';
 import type {
   ProjectIndexConfig,
   ProjectChunk,
@@ -24,6 +25,23 @@ import type {
   ProjectSearchResult,
   ProjectIndexerStats,
 } from './types.js';
+
+// File types and directories to skip during indexing
+const SKIP_EXTENSIONS = new Set(['.db', '.har', '.db-journal', '.db-wal', '.sqlite', '.sqlite3']);
+const SKIP_DIRS = new Set(['lancedb', 'node_modules', '.git', 'dist', 'build', '.cache', '__pycache__']);
+
+/**
+ * Check if a file should be skipped based on extension or directory
+ */
+function shouldSkipFile(filePath: string): boolean {
+  const fileExt = extname(filePath).toLowerCase();
+  if (SKIP_EXTENSIONS.has(fileExt)) return true;
+
+  const parts = filePath.split(sep);
+  if (parts.some(p => SKIP_DIRS.has(p))) return true;
+
+  return false;
+}
 
 // Default configuration
 const DEFAULT_CONFIG: Required<ProjectIndexConfig> = {
@@ -55,6 +73,15 @@ export class ProjectIndexer extends EventEmitter {
   private pendingEventCount: number = 0;
   private processingCompleteResolve: (() => void) | null = null;
   private processingCompletePromise: Promise<void> | null = null;
+
+  // In-memory buffer for batch writes
+  private pendingChunks: MemoryEntryInput[] = [];
+  private flushTimer: NodeJS.Timeout | null = null;
+
+  // Flush threshold - flush when buffer reaches this size
+  private static readonly FLUSH_THRESHOLD = 50;
+  // Flush interval in ms
+  private static readonly FLUSH_INTERVAL_MS = 100;
 
   constructor(config: ProjectIndexConfig, db?: MemoryDatabase) {
     super();
@@ -116,6 +143,11 @@ export class ProjectIndexer extends EventEmitter {
 
     // Handle file events
     this.watcher!.on('file', (event: FileEvent) => {
+      // Skip files that shouldn't be indexed
+      if (shouldSkipFile(event.path)) {
+        logger.debug(`Skipping file due to extension/directory filter: ${event.path}`);
+        return;
+      }
       logger.debug(`Indexer received file event: ${event.type} ${event.path}`);
       this.handleFileEvent(event);
     });
@@ -173,6 +205,9 @@ export class ProjectIndexer extends EventEmitter {
     if (!this.isRunning) return;
 
     logger.info('Stopping project indexer');
+
+    // Flush any pending chunks before stopping
+    await this.flush();
 
     // Wait for any pending processing to complete
     await this.waitForProcessingComplete();
@@ -287,6 +322,12 @@ export class ProjectIndexer extends EventEmitter {
    * Process a file - read, hash, chunk, embed, and store
    */
   async processFile(filePath: string): Promise<void> {
+    // Skip bad files at processFile level as safeguard
+    const SKIP_EXTS = new Set(['.db', '.har', '.db-journal', '.db-wal', '.tmp']);
+    const SKIP_DIRS = ['lancedb', 'node_modules', '.git', 'dist', 'build'];
+    if (SKIP_EXTS.has(extname(filePath).toLowerCase())) return;
+    if (SKIP_DIRS.some(d => filePath.includes(d))) return;
+
     logger.debug(`processFile called: ${filePath}`);
     try {
       // Check file size
@@ -317,14 +358,10 @@ export class ProjectIndexer extends EventEmitter {
       const chunks = this.chunker.chunkFile(content, filePath);
       logger.debug(`Chunked ${filePath} into ${chunks.length} chunks`);
 
-      // Process each chunk
+      // Queue chunks to in-memory buffer for batch writing
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
-        
-        // Generate embedding for the chunk
-        const results = await generateEmbeddings([chunk.content]);
-        const embedding = results[0].embedding;
-        
+
         // Create chunk metadata
         const chunkMetadata = {
           id: `${filePath}:${i}`,
@@ -339,15 +376,17 @@ export class ProjectIndexer extends EventEmitter {
           lineEnd: chunk.endLine,
         };
 
-        // Store in database (as a memory entry with project metadata)
-        await this.db.addMemory({
+        // Queue chunk to buffer (embedding will be generated during flush)
+        this.pendingChunks.push({
           text: chunk.content,
-          vector: new Float32Array(embedding),
           sourceType: 'project',
           sourcePath: filePath,
           metadataJson: JSON.stringify(chunkMetadata),
         });
       }
+
+      // Schedule a flush if needed
+      this.scheduleFlush();
 
       // Update tracking
       this.indexedFiles.set(filePath, {
@@ -356,7 +395,7 @@ export class ProjectIndexer extends EventEmitter {
         chunkCount: chunks.length,
       });
 
-      logger.info(`Indexed: ${filePath} (${chunks.length} chunks)`);
+      logger.info(`Queued for indexing: ${filePath} (${chunks.length} chunks)`);
     } catch (error) {
       const errorDetails = error instanceof Error
         ? { message: error.message, stack: error.stack, name: error.name }
@@ -456,6 +495,71 @@ export class ProjectIndexer extends EventEmitter {
   }
 
   /**
+   * Schedule a flush of pending chunks to the database.
+   * Uses a timer to batch writes and avoid overwhelming LanceDB.
+   */
+  private scheduleFlush(): void {
+    // If buffer exceeds threshold, flush immediately
+    if (this.pendingChunks.length >= ProjectIndexer.FLUSH_THRESHOLD) {
+      this.flushPendingChunks().catch(err => {
+        logger.error('Flush failed', { error: err.message });
+      });
+      return;
+    }
+
+    // Otherwise, schedule a deferred flush
+    if (this.flushTimer) return; // Already scheduled
+
+    this.flushTimer = setTimeout(() => {
+      this.flushPendingChunks().catch(err => {
+        logger.error('Flush failed', { error: err.message });
+      });
+    }, ProjectIndexer.FLUSH_INTERVAL_MS);
+  }
+
+  /**
+   * Flush all pending chunks to the database using batch insert.
+   */
+  private async flushPendingChunks(): Promise<void> {
+    if (this.pendingChunks.length === 0) {
+      this.flushTimer = null;
+      return;
+    }
+
+    // Take all pending chunks
+    const chunks = this.pendingChunks.splice(0);
+    this.flushTimer = null;
+
+    logger.debug(`Flushing ${chunks.length} chunks to database`);
+
+    try {
+      await this.db.addMemories(chunks);
+      logger.debug(`Successfully flushed ${chunks.length} chunks`);
+    } catch (error) {
+      // Put chunks back in queue to retry
+      logger.error(`Batch insert failed, re-queuing ${chunks.length} chunks`, {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      this.pendingChunks.unshift(...chunks);
+      // Schedule another flush attempt
+      this.scheduleFlush();
+    }
+  }
+
+  /**
+   * Force flush pending chunks (call before shutdown)
+   */
+  async flush(): Promise<void> {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    if (this.pendingChunks.length > 0) {
+      await this.flushPendingChunks();
+    }
+  }
+
+  /**
    * Compute SHA-256 hash of content
    */
   private computeHash(content: string): string {
@@ -466,14 +570,8 @@ export class ProjectIndexer extends EventEmitter {
    * Delete all chunks for a file from the database
    */
   private async deleteChunksForFile(filePath: string): Promise<void> {
-    // Query for entries with this source path
-    const entries = await this.db.listMemories({ sourceType: 'project' });
-    
-    for (const entry of entries) {
-      if (entry.sourcePath === filePath) {
-        await this.db.deleteMemory(entry.id);
-      }
-    }
+    // Use the efficient batch delete method
+    await this.db.deleteBySourcePath(filePath, 'project');
   }
 
   /**

@@ -35,8 +35,9 @@ export interface MemoryEntry {
 
 /**
  * Input for creating a new memory entry (without auto-generated fields)
+ * Note: vector is optional since addMemories() generates embeddings internally
  */
-export type MemoryEntryInput = Omit<MemoryEntry, 'id' | 'timestamp' | 'contentHash'>;
+export type MemoryEntryInput = Omit<MemoryEntry, 'id' | 'timestamp' | 'contentHash'> & { vector?: Float32Array | number[] };
 
 /**
  * Search strategy for querying memories

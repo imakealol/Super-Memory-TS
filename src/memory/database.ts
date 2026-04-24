@@ -5,7 +5,7 @@
  */
 
 import { connect, Index, type Connection, type Table } from '@lancedb/lancedb';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import {
   MEMORY_TABLE_NAME,
   DEFAULT_SEARCH_OPTIONS,
@@ -15,7 +15,36 @@ import {
   type SearchFilter,
   type MemorySourceType,
 } from './schema.js';
+import { resolve } from 'path';
 import { ModelManager } from '../model/index.js';
+import { generateEmbeddings } from '../model/embeddings.js';
+
+/**
+ * Global write queues per database path (prevents concurrent LanceDB writes)
+ */
+const globalWriteQueues = new Map<string, Promise<void>>();
+
+function getGlobalQueue(uri: string): Promise<void> {
+  const normalized = resolve(uri);
+  if (!globalWriteQueues.has(normalized)) {
+    globalWriteQueues.set(normalized, Promise.resolve());
+  }
+  return globalWriteQueues.get(normalized)!;
+}
+
+function setGlobalQueue(uri: string, promise: Promise<void>): void {
+  globalWriteQueues.set(resolve(uri), promise);
+}
+
+// Re-export for external consumers
+export type { MemoryEntryInput } from './schema.js';
+
+/**
+ * Helper to compute SHA-256 hash
+ */
+function computeHash(text: string): string {
+  return createHash('sha256').update(text, 'utf-8').digest('hex');
+}
 
 /**
  * LanceDB connection instance (per-URI)
@@ -43,17 +72,6 @@ const connectionRefCount: Map<string, number> = new Map();
 const MODEL_METADATA_TABLE = 'model_metadata';
 
 /**
- * Content hasher using Web Crypto API
- */
-async function sha256(text: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(text);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-/**
  * MemoryDatabase class for CRUD operations on memories
  */
 export class MemoryDatabase {
@@ -61,29 +79,113 @@ export class MemoryDatabase {
   private initialized: boolean = false;
 
   /**
-   * Write queue to serialize LanceDB writes and prevent commit conflicts.
-   * LanceDB only allows one writer at a time, so concurrent addMemory calls
-   * from multiple file indexings cause "Commit conflict for version X" errors.
+   * Execute a write operation sequentially through the global queue.
+   * Uses global mutex per database path to prevent concurrent LanceDB writes
+   * which cause "Commit conflict for version X" errors.
    */
-  private writeQueue: Promise<void> = Promise.resolve();
+  private async enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
+    const currentQueue = getGlobalQueue(this.uri);
+    const newQueue = currentQueue.then(async () => {
+      return operation();
+    });
+    setGlobalQueue(this.uri, newQueue.then(() => {}).catch(() => {}));
+    return newQueue;
+  }
 
   constructor(uri: string = './memory_data') {
     this.uri = uri;
   }
 
   /**
-   * Execute a write operation sequentially through the queue.
-   * All writes (addMemory, deleteMemory, etc.) must go through this.
+   * Add multiple memories in a single transaction (batch insert).
+   * More efficient than individual adds when dealing with multiple chunks.
    */
-  private async enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
-    const queuedWrite = this.writeQueue.then(async () => {
-      return operation();
+  async addMemories(entries: MemoryEntryInput[]): Promise<MemoryEntry[]> {
+    return this.enqueueWrite(async () => {
+      const memoryTable = this.getTable();
+      const timestamp = Date.now();
+      const timestampISO = new Date(timestamp).toISOString();
+
+      // Generate embeddings for all entries
+      const texts = entries.map(e => e.text);
+      const embeddingResults = await generateEmbeddings(texts);
+
+      const records = entries.map((entry, idx) => {
+        const contentHash = computeHash(entry.text);
+        return {
+          id: randomUUID(),
+          text: entry.text,
+          vector: embeddingResults[idx].embedding,
+          sourceType: entry.sourceType,
+          sourcePath: entry.sourcePath ?? '',
+          timestamp,
+          contentHash,
+          metadataJson: entry.metadataJson ?? '',
+          sessionId: entry.sessionId ?? '',
+        };
+      });
+
+      // Insert all in one transaction
+      await memoryTable.add(records);
+
+      // Try to create index after first data insertion
+      await this.ensureIndex();
+
+      // Return as MemoryEntry with proper types
+      return records.map(r => ({
+        id: r.id,
+        text: r.text,
+        vector: new Float32Array(r.vector),
+        sourceType: r.sourceType as MemorySourceType,
+        sourcePath: r.sourcePath,
+        timestamp: new Date(timestampISO),
+        contentHash: r.contentHash,
+        metadataJson: r.metadataJson,
+        sessionId: r.sessionId,
+      }));
     });
+  }
 
-    // Update queue to chain this write (even if it fails, we move on)
-    this.writeQueue = queuedWrite.then(() => {}).catch(() => {});
+  /**
+   * Delete all memories from a specific source path.
+   * Useful for cleaning up file chunks when a file changes.
+   */
+  async deleteBySourcePath(sourcePath: string, sourceType?: string): Promise<number> {
+    return this.enqueueWrite(async () => {
+      const memoryTable = this.getTable();
+      let deletedCount = 0;
 
-    return queuedWrite;
+      // Build query to find entries with this source path
+      const filter = sourceType
+        ? `"sourcePath" = '${sourcePath}' AND "sourceType" = '${sourceType}'`
+        : `"sourcePath" = '${sourcePath}'`;
+
+      // Query and delete in batches to avoid overwhelming the database
+      let hasMore = true;
+      while (hasMore) {
+        const results = await memoryTable.query()
+          .where(filter)
+          .limit(100)
+          .toArray();
+
+        if (results.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        for (const row of results) {
+          await memoryTable.delete(`id = '${row.id}'`);
+          deletedCount++;
+        }
+
+        // If we got fewer than limit, we're done
+        if (results.length < 100) {
+          hasMore = false;
+        }
+      }
+
+      return deletedCount;
+    });
   }
 
   /**
@@ -247,7 +349,7 @@ export class MemoryDatabase {
 
       const id = randomUUID();
       const timestamp = Date.now();
-      const contentHash = await sha256(input.text);
+      const contentHash = computeHash(input.text);
 
       // Ensure vector is a regular array for LanceDB compatibility
       const vectorArray = Array.isArray(input.vector)
