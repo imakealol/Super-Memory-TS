@@ -112,6 +112,7 @@ export class ModelManager {
 
   /**
    * Load the embedding model with specified precision
+   * Throws error if loading fails - no silent fallback to prevent dimension mismatch
    */
   private async loadModel(): Promise<void> {
     if (this.extractor) return;
@@ -148,13 +149,18 @@ export class ModelManager {
           device,
         } as any) as any;
       } catch (error) {
-        // Fallback to CPU/MiniLM on error
-        console.warn(`Failed to load ${modelId}, falling back to MiniLM:`, error);
-        this.config.modelId = MINI_LM_MODEL_ID;
-        this.config.device = 'cpu';
-        this.extractor = await pipeline('feature-extraction', MINI_LM_MODEL_ID, {
-          device: 'cpu',
-        } as any) as any;
+        // DO NOT silently fallback - dimension mismatch causes crashes
+        // Instead, throw a clear error that tells user to use CPU or fix GPU setup
+        const errorMsg = [
+          `Failed to load embedding model '${modelId}' on device '${device}'.`,
+          `Error: ${error instanceof Error ? error.message : String(error)}`,
+          ``,
+          `To fix this, either:`,
+          `  1. Set BOOMERANG_DEVICE=cpu to use CPU-only mode`,
+          `  2. Ensure GPU drivers are properly installed for CUDA`,
+          `  3. Check that your GPU has enough VRAM for the model`,
+        ].join('\n');
+        throw new Error(errorMsg);
       }
 
       this.isLoading = false;

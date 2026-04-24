@@ -33,6 +33,11 @@ const tables: Map<string, Table> = new Map();
 const indexCreated: Map<string, boolean> = new Map();
 
 /**
+ * Model metadata table name
+ */
+const MODEL_METADATA_TABLE = 'model_metadata';
+
+/**
  * Content hasher using Web Crypto API
  */
 async function sha256(text: string): Promise<string> {
@@ -105,6 +110,45 @@ export class MemoryDatabase {
       // Note: We create with data to get proper schema, then delete
       const tempTable = await db.openTable(MEMORY_TABLE_NAME);
       await tempTable.delete("id = 'temp'");
+
+      // Store model metadata for future validation
+      await this.storeModelMetadata(modelManager.getMetadata().modelId, embeddingDim);
+    } else {
+      // Table exists - validate model dimensions match
+      const modelManager = ModelManager.getInstance();
+      const currentDimensions = modelManager.getDimensions();
+
+      // Check stored metadata against current model
+      const storedMeta = await this.getStoredModelMetadata();
+      if (storedMeta && storedMeta.dimensions !== currentDimensions) {
+        // Dimension mismatch - drop and recreate table
+        console.warn(`Model dimension mismatch: stored=${storedMeta.dimensions}, current=${currentDimensions}`);
+        console.warn('Dropping existing table and recreating with new dimensions...');
+
+        await db.dropTable(MEMORY_TABLE_NAME);
+
+        // Recreate table with correct dimensions
+        const embeddingDim = currentDimensions;
+        await db.createTable(MEMORY_TABLE_NAME, [
+          {
+            id: 'temp',
+            text: '',
+            vector: Array(embeddingDim).fill(0),
+            sourceType: 'session',
+            sourcePath: '',
+            timestamp: new Date(),
+            contentHash: '',
+            metadataJson: '',
+            sessionId: '',
+          },
+        ]);
+
+        const tempTable = await db.openTable(MEMORY_TABLE_NAME);
+        await tempTable.delete("id = 'temp'");
+
+        // Store updated model metadata
+        await this.storeModelMetadata(modelManager.getMetadata().modelId, embeddingDim);
+      }
     }
 
     const memoryTable = await db.openTable(MEMORY_TABLE_NAME);
@@ -378,6 +422,90 @@ export class MemoryDatabase {
       indexCreated.delete(this.uri);
     }
     this.initialized = false;
+  }
+
+  /**
+   * Store model metadata in the database
+   */
+  async storeModelMetadata(modelId: string, dimensions: number): Promise<void> {
+    const db = connections.get(this.uri);
+    if (!db) return;
+
+    // Create metadata table if it doesn't exist
+    const tableNames = await db.tableNames();
+    if (!tableNames.includes(MODEL_METADATA_TABLE)) {
+      await db.createTable(MODEL_METADATA_TABLE, [
+        {
+          key: 'current',
+          modelId,
+          dimensions,
+          createdAt: new Date(),
+        },
+      ]);
+    } else {
+      // Update existing metadata using SQL WHERE clause
+      const metaTable = await db.openTable(MODEL_METADATA_TABLE);
+      await metaTable.update({
+        values: {
+          modelId,
+          dimensions,
+          createdAt: new Date(),
+        },
+        where: `key = 'current'`,
+      });
+    }
+  }
+
+  /**
+   * Retrieve stored model metadata from the database
+   * Returns null if no metadata exists (new database)
+   */
+  async getStoredModelMetadata(): Promise<{ modelId: string; dimensions: number } | null> {
+    const db = connections.get(this.uri);
+    if (!db) return null;
+
+    try {
+      const tableNames = await db.tableNames();
+      if (!tableNames.includes(MODEL_METADATA_TABLE)) {
+        return null;
+      }
+
+      const metaTable = await db.openTable(MODEL_METADATA_TABLE);
+      const results = await metaTable.query().where(`key = 'current'`).limit(1).toArray();
+
+      if (results.length === 0) {
+        return null;
+      }
+
+      return {
+        modelId: results[0].modelId as string,
+        dimensions: results[0].dimensions as number,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Validate that current model dimensions match stored metadata
+   * Throws error if there's a mismatch
+   */
+  async validateModelDimensions(currentDimensions: number): Promise<void> {
+    const stored = await this.getStoredModelMetadata();
+    if (stored && stored.dimensions !== currentDimensions) {
+      const errorMsg = [
+        `Model dimension mismatch detected!`,
+        `  Stored dimensions: ${stored.dimensions}`,
+        `  Current model dimensions: ${currentDimensions}`,
+        `  This means the database was created with a different embedding model.`,
+        ``,
+        `To fix this, delete the database directory and restart:`,
+        `  rm -rf ./memory_data`,
+        ``,
+        `Or specify a different database path via MEMORY_DB_PATH environment variable.`,
+      ].join('\n');
+      throw new Error(errorMsg);
+    }
   }
 }
 

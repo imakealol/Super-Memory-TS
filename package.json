@@ -1,6 +1,6 @@
 {
   "name": "@veedubin/super-memory-ts",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Super-Memory MCP server with local embeddings and vector search",
   "license": "MIT",
   "repository": {
