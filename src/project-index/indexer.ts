@@ -357,7 +357,10 @@ export class ProjectIndexer extends EventEmitter {
 
       logger.info(`Indexed: ${filePath} (${chunks.length} chunks)`);
     } catch (error) {
-      logger.error(`Failed to process file: ${filePath}`, { error });
+      const errorDetails = error instanceof Error
+        ? { message: error.message, stack: error.stack, name: error.name }
+        : { raw: String(error), type: typeof error };
+      logger.error(`Failed to process file: ${filePath}`, errorDetails);
       this.emit('error', error);
     }
   }
@@ -371,7 +374,10 @@ export class ProjectIndexer extends EventEmitter {
       this.indexedFiles.delete(filePath);
       logger.info(`Removed from index: ${filePath}`);
     } catch (error) {
-      logger.error(`Failed to remove file: ${filePath}`, { error });
+      const errorDetails = error instanceof Error
+        ? { message: error.message, stack: error.stack, name: error.name }
+        : { raw: String(error), type: typeof error };
+      logger.error(`Failed to remove file: ${filePath}`, errorDetails);
     }
   }
 
