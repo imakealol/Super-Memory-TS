@@ -7,7 +7,7 @@
 import os from 'os';
 import fs from 'fs';
 import { readFile, writeFile, mkdir } from 'fs/promises';
-import { resolve, join } from 'path';
+import { resolve } from 'path';
 import { logger } from './utils/logger.js';
 
 // ==================== Types ====================
@@ -96,13 +96,11 @@ const DEFAULT_CONFIG: Config = {
 // ==================== Performance Config Path ====================
 
 /**
- * Get the config file path respecting XDG_CONFIG_HOME
- * Returns ~/.config/super-memory-ts/config.json
+ * Get the config file path (project-local, relative to cwd)
+ * Returns `.opencode/super-memory-ts/config.json`
  */
 export function getConfigPath(): string {
-  const xdgConfigHome = process.env.XDG_CONFIG_HOME;
-  const configHome = xdgConfigHome || join(os.homedir(), '.config');
-  return resolve(configHome, 'super-memory-ts', 'config.json');
+  return resolve('.opencode', 'super-memory-ts', 'config.json');
 }
 
 // ==================== Performance Config Validation ====================

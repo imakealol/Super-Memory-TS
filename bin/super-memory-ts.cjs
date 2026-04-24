@@ -4,11 +4,9 @@ const os = require('os');
 const path = require('path');
 const fs = require('fs');
 
-// Get config path (respects XDG_CONFIG_HOME)
+// Get config path (project-local, relative to cwd)
 function getConfigPath() {
-  const xdgConfigHome = process.env.XDG_CONFIG_HOME;
-  const configHome = xdgConfigHome || path.join(os.homedir(), '.config');
-  return path.join(configHome, 'super-memory-ts', 'config.json');
+  return path.join(process.cwd(), '.opencode', 'super-memory-ts', 'config.json');
 }
 
 // Read maxHeapMB from config file
