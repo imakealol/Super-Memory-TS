@@ -32,7 +32,9 @@ export interface ModelConfig {
 }
 
 export interface DatabaseConfig {
-  dbPath: string;
+  /** @deprecated Use qdrantUrl instead */
+  dbPath?: string;
+  qdrantUrl?: string;
   tableName: string;
 }
 
@@ -92,7 +94,7 @@ const DEFAULT_CONFIG: Config = {
     batchSize: 32,
   },
   database: {
-    dbPath: QDRANT_URL,
+    qdrantUrl: QDRANT_URL,
     tableName: 'memories',
   },
   indexer: {
@@ -231,8 +233,8 @@ export function validateConfig(config: Config): ValidationResult {
   }
 
   // Database validation
-  if (!config.database.dbPath) {
-    errors.push('Database path is required');
+  if (!config.database.qdrantUrl && !config.database.dbPath) {
+    errors.push('Database URL is required');
   }
 
   // Indexer validation
@@ -274,7 +276,7 @@ function parseEnvConfig(): Partial<Config> {
       batchSize: DEFAULT_CONFIG.model.batchSize,
     },
     database: {
-      dbPath: process.env[ENV_VARS.QDRANT_URL] || process.env[ENV_VARS.BOOMERANG_DB_PATH] || DEFAULT_CONFIG.database.dbPath,
+      qdrantUrl: process.env[ENV_VARS.QDRANT_URL] || process.env[ENV_VARS.BOOMERANG_DB_PATH] || DEFAULT_CONFIG.database.qdrantUrl,
       tableName: DEFAULT_CONFIG.database.tableName,
     },
     indexer: {
@@ -316,7 +318,7 @@ async function loadJsonConfig(configPath: string): Promise<Partial<Config>> {
         batchSize: json.model.batchSize || DEFAULT_CONFIG.model.batchSize,
       } : undefined,
       database: json.database ? {
-        dbPath: json.database.dbPath || DEFAULT_CONFIG.database.dbPath,
+        qdrantUrl: json.database.qdrantUrl || json.database.dbPath || DEFAULT_CONFIG.database.qdrantUrl,
         tableName: json.database.tableName || DEFAULT_CONFIG.database.tableName,
       } : undefined,
       indexer: json.indexer ? {

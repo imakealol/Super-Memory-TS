@@ -31,6 +31,8 @@ export interface MemoryEntry {
   metadataJson?: string;
   /** Optional session ID for session-scoped memories */
   sessionId?: string;
+  /** Qdrant similarity score (populated during search) */
+  score?: number;
 }
 
 /**

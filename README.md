@@ -98,8 +98,8 @@ Automatic device detection with fallback:
 
 | Precision | Memory (BGE-Large) | Accuracy | Use Case |
 |-----------|-------------------|----------|----------|
-| `fp32` | ~650MB | Highest | Production |
-| `fp16` | ~325MB | Near-lossy | **Default** |
+| `fp32` | ~650MB | Highest | **Default** |
+| `fp16` | ~325MB | Near-lossy | Production |
 | `q8` | ~162MB | Good | Memory constrained |
 | `q4` | ~81MB | Acceptable | Edge devices |
 
@@ -140,7 +140,7 @@ Direct module integration with Boomerang:
 │  │             │  │   System    │  │                         ││
 │  │ query_      │  │             │  │  ┌─────────────────────┐ ││
 │  │ memories    │  │  ┌────────┐  │  │   FileWatcher      │ ││
-│  │             │  │  │LanceDB │  │  │   (chokidar)       │ ││
+│  │             │  │  │Qdrant │  │  │   (chokidar)       │ ││
 │  │ add_memory  │──│  │  +     │  │  │ └─────────────────────┘ ││
 │  │             │  │  │ HNSW   │  │  │  ┌─────────────────────┐ ││
 │  │ search_     │  │  └────────┘  │  │  │   FileChunker       │ ││
@@ -180,7 +180,7 @@ When integrated with Boomerang (built-in mode):
 │  │             │  │   System    │  │                         ││
 │  │ query_      │  │             │  │  ┌─────────────────────┐ ││
 │  │ memories    │  │  ┌────────┐  │  │  │   FileWatcher      │ ││
-│  │             │  │  │LanceDB │  │  │  │   (chokidar)       │ ││
+│  │             │  │  │Qdrant │  │  │  │   (chokidar)       │ ││
 │  │ add_memory  │──│  │  +     │  │  │  └─────────────────────┘ ││
 │  │             │  │  │ HNSW   │  │  │  ┌─────────────────────┐ ││
 │  │ search_     │  │  └────────┘  │  │  │   FileChunker       │ ││
@@ -214,7 +214,7 @@ add_memory tool
       │
       ▼
 ┌──────────────┐     ┌─────────────────┐     ┌─────────────┐
-│ Input Text   │────▶│ Generate        │────▶│ LanceDB     │
+│ Input Text   │────▶│ Generate        │────▶│ Qdrant      │
 │              │     │ Embedding        │     │ + HNSW Index│
 └──────────────┘     │ (ModelManager)  │     └─────────────┘
                      └─────────────────┘
@@ -228,7 +228,7 @@ query_memories tool
       ▼
 ┌──────────────┐     ┌─────────────────┐     ┌─────────────┐
 │ Query Text  │────▶│ Generate Query  │────▶│ HNSW Search │
-│              │     │ Embedding       │     │ (LanceDB)   │
+│              │     │ Embedding       │     │ (Qdrant)    │
 └──────────────┘     │ (ModelManager)  │     └─────────────┘
                      └─────────────────┘            │
                                                    ▼
@@ -289,7 +289,7 @@ manager.release();
 
 ### Memory Storage (`src/memory/`)
 
-**LanceDB** with HNSW indexing:
+**Qdrant** with HNSW indexing:
 
 ```typescript
 // Schema
@@ -369,7 +369,7 @@ BOOMERANG_DEVICE=auto           # auto, gpu, cpu
 BOOMERANG_USE_GPU=true          # true, false
 
 # Database
-BOOMERANG_DB_PATH=./.super-memory/db
+export QDRANT_URL=http://localhost:6333  # Qdrant server URL
 
 # Logging
 BOOMERANG_LOG_LEVEL=info        # debug, info, warn, error
@@ -436,7 +436,7 @@ Create `super-memory.json` in your project root:
     "batchSize": 32
   },
   "database": {
-    "dbPath": "./.super-memory/db",
+    "qdrantUrl": "http://localhost:6333",
     "tableName": "memories"
   },
   "indexer": {
@@ -468,10 +468,10 @@ Settings are merged in the following order (highest to lowest):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BOOMERANG_PRECISION` | `fp16` | Model precision: `fp32`, `fp16`, `q8`, `q4` |
+| `BOOMERANG_PRECISION` | `fp32` | Model precision: `fp32`, `fp16`, `q8`, `q4` |
 | `BOOMERANG_DEVICE` | `auto` | Compute device: `auto`, `gpu`, `cpu` |
 | `BOOMERANG_USE_GPU` | `false` | Enable GPU usage |
-| `BOOMERANG_DB_PATH` | `./.super-memory/db` | Database storage path |
+| `QDRANT_URL` | `http://localhost:6333` | Qdrant server URL |
 | `BOOMERANG_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
 | `BOOMERANG_CHUNK_SIZE` | `512` | Token chunk size for indexing |
 | `BOOMERANG_CHUNK_OVERLAP` | `50` | Overlap between chunks |
@@ -662,7 +662,7 @@ The `super-memory.json` configuration file:
     "batchSize": 32
   },
   "database": {
-    "dbPath": "./.super-memory/db",
+    "qdrantUrl": "http://localhost:6333",
     "tableName": "memories"
   },
   "indexer": {
@@ -763,14 +763,14 @@ const manager = ModelManager.getInstance();
 await manager.acquire();  // Loads once, shares across users
 ```
 
-### LanceDB over Alternatives
+### Qdrant over Alternatives
 
 | Database | Pros | Cons |
 |----------|------|------|
-| **LanceDB** | Native HNSW, Arrow format, embedded | Newer project |
-| Pinecone | Managed, scalable | Requires API key |
-| Chroma | Simple, local | Less mature |
-| Qdrant | Powerful filtering | More complex |
+| **Qdrant** | REST API, payload filtering, HNSW, open source, scalable | Requires separate process |
+| LanceDB | Embedded, Arrow format | TypeScript support was immature at time of migration |
+| Chroma | Simple, local | Less mature ecosystem |
+| Pinecone | Managed, scalable | Requires API key, not self-hostable |
 
 ### Hybrid Chunking
 
@@ -801,7 +801,7 @@ Super-Memory-TS/
 │   │   └── types.ts          # Model type definitions
 │   ├── memory/
 │   │   ├── index.ts          # MemorySystem facade
-│   │   ├── database.ts       # LanceDB operations
+│   │   ├── database.ts       # Qdrant operations
 │   │   ├── schema.ts         # Memory schema
 │   │   └── search.ts         # Search strategies
 │   ├── project-index/
@@ -887,6 +887,6 @@ MIT License - see project repository for details.
 ## Related Documentation
 
 - [MCP SDK Documentation](https://modelcontextprotocol.io/)
-- [LanceDB Documentation](https://lancedb.github.io/lancedb/)
+- [Qdrant Documentation](https://qdrant.tech/documentation/)
 - [@xenova/transformers](https://huggingface.co/docs/xenova/transformers)
 - [BGE-Large Model Card](https://huggingface.co/BAAI/bge-large-en-v1.5)

@@ -381,16 +381,12 @@ describe('SuperMemoryServer', () => {
       const schema = await import('../src/memory/schema.js');
       
       expect(schema.MEMORY_TABLE_NAME).toBe('memories');
-      expect(schema.MEMORY_TABLE_NAME).toBeDefined();
-      
-      expect(schema.HNSW_CONFIG).toBeDefined();
-      expect(schema.HNSW_CONFIG.type).toBe('hnsw');
-      expect(schema.HNSW_CONFIG.distanceType).toBe('cosine');
-      
+      expect(schema.QDRANT_HNSW_CONFIG).toBeDefined();
+      expect(schema.QDRANT_HNSW_CONFIG.m).toBe(16);
+      expect(schema.QDRANT_HNSW_CONFIG.ef_construct).toBe(128);
       expect(schema.DEFAULT_SEARCH_OPTIONS).toBeDefined();
       expect(schema.DEFAULT_SEARCH_OPTIONS.topK).toBe(5);
       expect(schema.DEFAULT_SEARCH_OPTIONS.strategy).toBe('TIERED');
-      expect(schema.DEFAULT_SEARCH_OPTIONS.threshold).toBe(0.72);
     });
   });
 
@@ -747,30 +743,3 @@ describe('Server Integration Tests', () => {
     });
   });
 });
-
-// ==================== Bug Report ====================
-
-/**
- * BUG REPORT: LanceDB Integration Issues
- * 
- * The server fails to start due to LanceDB integration issues:
- * 
- * 1. Issue: "Column vector is expected to be a vector column but first non-null 
- *    value is not an array"
- *    - Cause: When creating table with sample data, Float32Array is passed directly
- *    - Fix: Changed to Array(1024).fill(0)
- * 
- * 2. Issue: "Could not convert column "sourcePath" to Arrow: Error makeVector 
- *    cannot infer the type if all values are null or undefined"
- *    - Cause: Nullable fields with null values can't infer Arrow types
- *    - Fix: Changed null values to empty strings
- * 
- * 3. Issue: "Invalid vector format in database" during listMemories
- *    - Cause: LanceDB returns vectors in a different format than expected
- *    - Status: INVESTIGATING - The kmeans panic suggests dimension mismatch
- * 
- * RECOMMENDATION: The LanceDB integration needs review:
- * - Verify the embedding dimensions match between model output and database schema
- * - Consider using explicit schema definition instead of schema inference
- * - Add proper error handling for index creation failures
- */

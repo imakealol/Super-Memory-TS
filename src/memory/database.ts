@@ -22,6 +22,7 @@ import {
 } from './schema.js';
 import { ModelManager } from '../model/index.js';
 import { generateEmbeddings } from '../model/embeddings.js';
+import { logger } from '../utils/logger.js';
 
 // Re-export for external consumers
 export type { MemoryEntryInput } from './schema.js';
@@ -78,6 +79,13 @@ function getClient(url: string): QdrantClient {
 }
 
 /**
+ * Clear the client cache (for testing purposes)
+ */
+export function clearClientCache(): void {
+  clients.clear();
+}
+
+/**
  * Retry wrapper for transient network errors
  */
 async function withRetry<T>(operation: () => Promise<T>, retries = 3): Promise<T> {
@@ -119,22 +127,40 @@ function toPoint(
 }
 
 /**
+ * Type guard for named vectors (Record<string, number[]>)
+ */
+function isNamedVector(vector: unknown): vector is Record<string, number[]> {
+  return typeof vector === 'object' && vector !== null && !Array.isArray(vector);
+}
+
+/**
+ * Extract Float32Array from vector regardless of format
+ */
+function extractVector(point: Schemas['ScoredPoint'] | Schemas['Record']): Float32Array {
+  const rawVector = point.vector;
+
+  // Handle flat number array
+  if (Array.isArray(rawVector) && rawVector.length > 0 && typeof rawVector[0] === 'number') {
+    return new Float32Array(rawVector as number[]);
+  }
+
+  // Handle named vectors
+  if (isNamedVector(rawVector)) {
+    const defaultVec = rawVector.default;
+    if (Array.isArray(defaultVec) && defaultVec.length > 0 && typeof defaultVec[0] === 'number') {
+      return new Float32Array(defaultVec as number[]);
+    }
+  }
+
+  return new Float32Array();
+}
+
+/**
  * Convert Qdrant ScoredPoint/Record → MemoryEntry
  */
 function pointToMemoryEntry(point: Schemas['ScoredPoint'] | Schemas['Record']): MemoryEntry {
   const payload = point.payload ?? {};
-
-  // Vector may be number[] (default vector) or Record<string, number[]> (named vectors)
-  let vector: Float32Array;
-  if (Array.isArray(point.vector)) {
-    vector = new Float32Array(point.vector as number[]);
-  } else if (point.vector && typeof point.vector === 'object') {
-    // Named vectors — extract default
-    const vec = (point.vector as Record<string, number[]>).default;
-    vector = new Float32Array(vec ?? []);
-  } else {
-    vector = new Float32Array();
-  }
+  const vector = extractVector(point);
 
   const ts = payload[PAYLOAD_FIELDS.timestamp];
 
@@ -156,8 +182,10 @@ function pointToMemoryEntry(point: Schemas['ScoredPoint'] | Schemas['Record']): 
 export class MemoryDatabase {
   private initialized: boolean = false;
   private client: QdrantClient;
+  private qdrantUrl: string;
 
   constructor(url: string = DEFAULT_QDRANT_URL) {
+    this.qdrantUrl = url;
     this.client = getClient(url);
   }
 
@@ -166,6 +194,15 @@ export class MemoryDatabase {
    */
   async initialize(): Promise<void> {
     if (this.initialized) return;
+
+    // Health check - verify Qdrant is reachable
+    try {
+      await this.client.getCollections();
+    } catch (err) {
+      throw new Error(
+        `Cannot connect to Qdrant at ${this.qdrantUrl}. Ensure Qdrant is running: docker run -p 6333:6333 qdrant/qdrant`
+      );
+    }
 
     const modelManager = ModelManager.getInstance();
     const embeddingDim = modelManager.getDimensions();
@@ -217,7 +254,7 @@ export class MemoryDatabase {
         });
       } catch (err) {
         // Index may already exist — non-fatal
-        console.warn(`Payload index warning for ${field}:`, err);
+        logger.warn(`Payload index warning for ${field}:`, err);
       }
     }
   }
@@ -332,7 +369,7 @@ export class MemoryDatabase {
       limit: topK * 2,
       filter,
       with_payload: true,
-      with_vector: true,
+      with_vector: false,
     }));
 
     // Deduplicate by contentHash and return topK
@@ -341,6 +378,9 @@ export class MemoryDatabase {
 
     for (const result of results) {
       const entry = pointToMemoryEntry(result);
+      if (typeof result.score === 'number') {
+        entry.score = result.score;
+      }
       if (!seen.has(entry.contentHash)) {
         seen.add(entry.contentHash);
         deduped.push(entry);
@@ -361,7 +401,7 @@ export class MemoryDatabase {
       filter: qdrantFilter,
       limit: 100,
       with_payload: true,
-      with_vector: true,
+      with_vector: false,
     }));
 
     return results.points.map(p => pointToMemoryEntry(p));

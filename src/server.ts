@@ -1,6 +1,6 @@
 /**
  * MCP Server implementation for Super-Memory
- * 
+ *
  * Provides MCP tools for:
  * - query_memories: Search memories using semantic similarity
  * - add_memory: Store a new memory entry
@@ -8,152 +8,15 @@
  * - index_project: Manually trigger project indexing
  */
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  CallToolRequest,
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 import { loadConfigSync, validateConfig, type Config } from './config.js';
 import { ModelManager } from './model/index.js';
 import { MemorySystem, getMemorySystem } from './memory/index.js';
 import { ProjectIndexer } from './project-index/indexer.js';
 import { logger } from './utils/logger.js';
-import { MemoryError } from './utils/errors.js';
-import type { SearchOptions, MemoryEntryInput, MemorySourceType } from './memory/schema.js';
-
-// ==================== Types ====================
-
-interface QueryMemoriesArgs {
-  query: string;
-  limit?: number;
-  strategy?: 'tiered' | 'vector_only' | 'text_only';
-}
-
-interface AddMemoryArgs {
-  content: string;
-  sourceType?: 'manual' | 'file' | 'conversation' | 'web';
-  sourcePath?: string;
-  metadata?: Record<string, unknown>;
-}
-
-interface SearchProjectArgs {
-  query: string;
-  topK?: number;
-  fileTypes?: string[];
-  paths?: string[];
-}
-
-interface IndexProjectArgs {
-  path?: string;
-  force?: boolean;
-}
-
-// ==================== Tool Definitions ====================
-
-const TOOLS = [
-  {
-    name: 'query_memories',
-    description: 'Query memories using semantic similarity. Returns memories most relevant to the query.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'The search query to find relevant memories',
-        },
-        limit: {
-          type: 'number',
-          description: 'Maximum number of results to return (default: 10)',
-          default: 10,
-        },
-        strategy: {
-          type: 'string',
-          enum: ['tiered', 'vector_only', 'text_only'],
-          description: 'Search strategy: tiered (hybrid), vector_only (semantic), or text_only (keyword)',
-          default: 'tiered',
-        },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    name: 'add_memory',
-    description: 'Add a new memory entry to the memory store.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        content: {
-          type: 'string',
-          description: 'The content to store in memory',
-        },
-        sourceType: {
-          type: 'string',
-          enum: ['manual', 'file', 'conversation', 'web'],
-          description: 'Source type of the memory',
-          default: 'manual',
-        },
-        sourcePath: {
-          type: 'string',
-          description: 'Optional source path or URL',
-        },
-        metadata: {
-          type: 'object',
-          description: 'Optional metadata to attach to the memory',
-        },
-      },
-      required: ['content'],
-    },
-  },
-  {
-    name: 'search_project',
-    description: 'Search the indexed project files for relevant code or content.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'The search query',
-        },
-        topK: {
-          type: 'number',
-          description: 'Maximum number of results (default: 20)',
-          default: 20,
-        },
-        fileTypes: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Optional file type filters (e.g., ["ts", "js"])',
-        },
-        paths: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Optional path filters to scope search',
-        },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    name: 'index_project',
-    description: 'Trigger project indexing. Scans and indexes all supported files in the project.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        path: {
-          type: 'string',
-          description: 'Optional specific path to index (defaults to current directory)',
-        },
-        force: {
-          type: 'boolean',
-          description: 'Force re-indexing of all files (default: false)',
-          default: false,
-        },
-      },
-    },
-  },
-];
+import type { SearchOptions, SearchStrategy, MemorySourceType } from './memory/schema.js';
 
 // ==================== Helper Functions ====================
 
@@ -170,20 +33,10 @@ function mapSourceType(input: string): MemorySourceType {
   return mapping[input] || 'session';
 }
 
-/**
- * Apply timeout to a promise, returning the result or throwing a timeout error
- */
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new MemoryError('Request timeout', 'REQUEST_TIMEOUT')), ms);
-  });
-  return Promise.race([promise, timeoutPromise]);
-}
-
 // ==================== SuperMemoryServer ====================
 
 export class SuperMemoryServer {
-  private server: Server;
+  private server: McpServer;
   private context: {
     memory: MemorySystem;
     indexer: ProjectIndexer | null;
@@ -191,36 +44,47 @@ export class SuperMemoryServer {
   private config: Config;
   private initialized: boolean = false;
   private initError: Error | null = null;
-  private transportConnected: boolean = false;
 
   constructor(config?: Config) {
     this.config = config || loadConfigSync();
-
-    // Validate config
-    const validation = validateConfig(this.config);
-    if (!validation.valid) {
-      logger.warn('Configuration warnings:', validation.errors);
-    }
+    this.validateConfig();
 
     this.context = {
-      memory: getMemorySystem(),
+      memory: getMemorySystem({ dbUri: this.config.database.qdrantUrl || this.config.database.dbPath }),
       indexer: null,
     };
 
     // Create MCP server
-    this.server = new Server(
-      {
-        name: 'super-memory',
-        version: '1.0.0',
-      },
-      {
-        capabilities: {
-          tools: {},
-        },
-      }
-    );
+    this.server = new McpServer({
+      name: 'super-memory',
+      version: '2.1.0',
+    });
 
-    this.setupHandlers();
+    this.registerTools();
+    this.setupShutdownHandlers();
+  }
+
+  /**
+   * Validate configuration and log warnings
+   */
+  private validateConfig(): void {
+    const validation = validateConfig(this.config);
+    if (!validation.valid) {
+      logger.warn('Configuration warnings:', validation.errors);
+    }
+  }
+
+  /**
+   * Set up graceful shutdown handlers
+   */
+  private setupShutdownHandlers(): void {
+    const shutdown = async () => {
+      await this.shutdown();
+      process.exit(0);
+    };
+
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
   }
 
   /**
@@ -238,315 +102,16 @@ export class SuperMemoryServer {
   }
 
   /**
-   * Set up MCP request handlers
+   * Map source type to internal format
    */
-  private setupHandlers(): void {
-    // List available tools
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      return { tools: TOOLS };
-    });
-
-    // Handle tool calls with timeout
-    this.server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest) => {
-      const { name, arguments: args } = request.params;
-
-      // Check connection state before processing
-      if (!this.transportConnected) {
-        logger.error('Received request but transport not connected');
-        return this.formatError(new MemoryError('Not connected to transport', 'NOT_CONNECTED'));
-      }
-
-      // Apply timeout to prevent requests from hanging indefinitely
-      const requestTimeout = 180000; // 180 seconds (3 minutes)
-
-      // High-priority tools that should pause indexing during execution
-      const highPriorityTools = ['query_memories', 'add_memory', 'search_project'];
-      const shouldPause = 
-        this.config.performance?.pauseIndexingDuringRequests !== false &&
-        highPriorityTools.includes(name) &&
-        this.context.indexer?.isIndexerRunning();
-
-      if (shouldPause) {
-        this.context.indexer!.pause();
-      }
-
-      try {
-        switch (name) {
-          case 'query_memories':
-            return await withTimeout(
-              this.handleQueryMemories(args as unknown as QueryMemoriesArgs),
-              requestTimeout
-            );
-          case 'add_memory':
-            return await withTimeout(
-              this.handleAddMemory(args as unknown as AddMemoryArgs),
-              requestTimeout
-            );
-          case 'search_project':
-            return await withTimeout(
-              this.handleSearchProject(args as unknown as SearchProjectArgs),
-              requestTimeout
-            );
-          case 'index_project':
-            return await withTimeout(
-              this.handleIndexProject(args as unknown as IndexProjectArgs),
-              requestTimeout
-            );
-          default:
-            throw new MemoryError(`Unknown tool: ${name}`, 'UNKNOWN_TOOL');
-        }
-      } finally {
-        if (shouldPause) {
-          this.context.indexer!.resume();
-        }
-      }
-    });
-  }
-
-  /**
-   * Handle query_memories tool
-   */
-  private async handleQueryMemories(args: QueryMemoriesArgs) {
-    const { query, limit = 10, strategy = 'tiered' } = args;
-
-    if (!query || query.trim().length === 0) {
-      throw new MemoryError('Query cannot be empty', 'VALIDATION_ERROR');
-    }
-
-    logger.debug(`Querying memories: "${query}" (strategy: ${strategy}, limit: ${limit})`);
-
-    try {
-      // Map user strategy to internal strategy
-      const internalStrategy = (strategy || 'tiered').toUpperCase() as 'TIERED' | 'VECTOR_ONLY' | 'TEXT_ONLY';
-
-      // For VECTOR_ONLY, we need to handle the case where embeddings aren't available
-      if (internalStrategy === 'VECTOR_ONLY') {
-        logger.warn('VECTOR_ONLY strategy may not work without embedding model - falling back to TEXT_ONLY');
-        // Fallback to TEXT_ONLY since we don't have embedding integration yet
-        const textResults = await this.context.memory.queryMemories(query, {
-          topK: limit,
-          strategy: 'TEXT_ONLY',
-        });
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify({
-                count: textResults.length,
-                memories: textResults.map((r) => this.formatMemoryEntry(r)),
-                strategy_used: 'TEXT_ONLY (VECTOR_ONLY fallback)',
-              }),
-            },
-          ],
-        };
-      }
-
-      const searchOpts: SearchOptions = {
-        topK: limit,
-        strategy: internalStrategy,
-      };
-
-      const results = await this.context.memory.queryMemories(query, searchOpts);
-
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify({
-              count: results.length,
-              memories: results.map((r) => this.formatMemoryEntry(r)),
-            }),
-          },
-        ],
-      };
-    } catch (error) {
-      if (error instanceof MemoryError) {
-        throw error;
-      }
-      throw new MemoryError(
-        `Failed to query memories: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'QUERY_FAILED'
-      );
-    }
-  }
-
-  /**
-   * Handle add_memory tool
-   */
-  private async handleAddMemory(args: AddMemoryArgs) {
-    const { content, sourceType = 'manual', sourcePath, metadata } = args;
-
-    if (!content || content.trim().length === 0) {
-      throw new MemoryError('Content cannot be empty', 'VALIDATION_ERROR');
-    }
-
-    logger.debug(`Adding memory: "${content.slice(0, 50)}..." (source: ${sourceType})`);
-
-    try {
-      // Check for duplicate content
-      const exists = await this.context.memory.contentExists(content);
-      if (exists) {
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify({
-                success: false,
-                message: 'Memory with identical content already exists',
-                duplicate: true,
-              }),
-            },
-          ],
-        };
-      }
-
-      const input: MemoryEntryInput = {
-        text: content,
-        vector: new Float32Array(), // Will be generated by the memory system
-        sourceType: mapSourceType(sourceType),
-        sourcePath,
-        metadataJson: metadata ? JSON.stringify(metadata) : undefined,
-      };
-
-      const id = await this.context.memory.addMemory(input);
-
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify({
-              success: true,
-              id,
-              message: 'Memory added successfully',
-            }),
-          },
-        ],
-      };
-    } catch (error) {
-      if (error instanceof MemoryError) {
-        throw error;
-      }
-      throw new MemoryError(
-        `Failed to add memory: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'ADD_FAILED'
-      );
-    }
-  }
-
-  /**
-   * Handle search_project tool
-   */
-  private async handleSearchProject(args: SearchProjectArgs) {
-    const { query, topK = 20, fileTypes, paths } = args;
-
-    if (!query || query.trim().length === 0) {
-      throw new MemoryError('Query cannot be empty', 'VALIDATION_ERROR');
-    }
-
-    if (!this.context.indexer) {
-      throw new MemoryError('Project indexer not initialized. Call index_project first.', 'INDEX_NOT_INITIALIZED');
-    }
-
-    logger.debug(`Searching project: "${query}" (topK: ${topK})`);
-
-    try {
-      const results = await this.context.indexer.search(query, {
-        topK,
-        filters: {
-          fileTypes,
-          paths,
-        },
-      });
-
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify({
-              count: results.length,
-              chunks: results.map((r) => ({
-                filePath: r.filePath,
-                content: r.chunk.content,
-                lineStart: r.lineStart,
-                lineEnd: r.lineEnd,
-                score: r.score,
-              })),
-            }),
-          },
-        ],
-      };
-    } catch (error) {
-      if (error instanceof MemoryError) {
-        throw error;
-      }
-      throw new MemoryError(
-        `Failed to search project: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'SEARCH_FAILED'
-      );
-    }
-  }
-
-  /**
-   * Handle index_project tool
-   */
-  private async handleIndexProject(args: IndexProjectArgs) {
-    const { path, force = false } = args;
-
-    if (!this.context.indexer) {
-      throw new MemoryError('Project indexer not initialized. Initialize with start() first.', 'INDEX_NOT_INITIALIZED');
-    }
-
-    const targetPath = path || this.config.database.dbPath || process.cwd();
-    logger.info(`Indexing project: ${targetPath} (force: ${force})`);
-
-    try {
-      // Trigger actual indexing on the target path
-      if (force) {
-        // Force reindex - clear existing index first
-        this.context.indexer.clearIndex();
-      }
-
-      // Start indexing (runs in background, but we wait briefly to get initial stats)
-      await this.context.indexer.start();
-
-      // Small delay to allow initial files to be processed
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      const stats = this.context.indexer.getStats();
-
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify({
-              success: true,
-              message: 'Indexing completed',
-              stats: {
-                totalFiles: stats.totalFiles,
-                indexedFiles: stats.indexedFiles,
-                failedFiles: stats.failedFiles,
-                totalChunks: stats.totalChunks,
-                lastIndexing: stats.lastIndexing,
-              },
-            }),
-          },
-        ],
-      };
-    } catch (error) {
-      if (error instanceof MemoryError) {
-        throw error;
-      }
-      throw new MemoryError(
-        `Failed to index project: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'INDEX_FAILED'
-      );
-    }
+  private mapSourceType(input: string): MemorySourceType {
+    return mapSourceType(input);
   }
 
   /**
    * Format a memory entry for JSON output
    */
-  private formatMemoryEntry(entry: ReturnType<MemorySystem['queryMemories']> extends Promise<infer T> ? T extends (infer U)[] ? U : never : never): object {
+  private formatMemoryEntry(entry: { id: string; text: string; sourceType: string; sourcePath?: string; timestamp: Date }): object {
     return {
       id: entry.id,
       content: entry.text,
@@ -557,28 +122,234 @@ export class SuperMemoryServer {
   }
 
   /**
-   * Format an error for MCP response
+   * Register all MCP tools with Zod schemas
    */
-  private formatError(error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    const name = error instanceof Error ? error.name : 'Error';
-
-    logger.error(`${name}: ${message}`);
-
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: JSON.stringify({
-            error: true,
-            name,
-            message,
-            code: error instanceof MemoryError ? error.code : 'INTERNAL_ERROR',
-          }),
+  private registerTools(): void {
+    // query_memories tool
+    this.server.registerTool(
+      'query_memories',
+      {
+        description: 'Query memories using semantic similarity. Returns memories most relevant to the query.',
+        inputSchema: {
+          query: z.string().min(1).describe('The search query to find relevant memories'),
+          limit: z.number().int().min(1).max(100).default(10).describe('Maximum number of results'),
+          strategy: z.enum(['tiered', 'vector_only', 'text_only']).default('tiered').describe('Search strategy'),
         },
-      ],
-      isError: true,
-    };
+        annotations: { readOnlyHint: true },
+      },
+      async ({ query, limit, strategy }: { query: string; limit: number; strategy: 'tiered' | 'vector_only' | 'text_only' }) => {
+        // Convert strategy to internal format
+        const strategyMap: Record<string, SearchStrategy> = {
+          'tiered': 'TIERED',
+          'vector_only': 'VECTOR_ONLY',
+          'text_only': 'TEXT_ONLY',
+        };
+        const internalStrategy = strategyMap[strategy] || 'TIERED';
+
+        const searchOpts: SearchOptions = {
+          topK: limit,
+          strategy: internalStrategy,
+        };
+
+        const results = await this.context.memory.queryMemories(query, searchOpts);
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              count: results.length,
+              memories: results.map((r) => this.formatMemoryEntry(r)),
+              strategy_used: internalStrategy,
+            }),
+          }],
+        };
+      }
+    );
+
+    // add_memory tool
+    this.server.registerTool(
+      'add_memory',
+      {
+        description: 'Add a new memory entry to the memory store.',
+        inputSchema: {
+          content: z.string().min(1).describe('The content to store in memory'),
+          sourceType: z.enum(['manual', 'file', 'conversation', 'web']).default('manual'),
+          sourcePath: z.string().optional().describe('Optional source path or URL'),
+          metadata: z.record(z.string(), z.unknown()).optional().describe('Optional metadata'),
+        },
+        annotations: { destructiveHint: true },
+      },
+      async ({ content, sourceType, sourcePath, metadata }: { content: string; sourceType: 'manual' | 'file' | 'conversation' | 'web'; sourcePath?: string; metadata?: Record<string, unknown> }) => {
+        // Check for duplicate content
+        const exists = await this.context.memory.contentExists(content);
+        if (exists) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                message: 'Memory with identical content already exists',
+                duplicate: true,
+              }),
+            }],
+          };
+        }
+
+        const internalSourceType = this.mapSourceType(sourceType);
+
+        const input = {
+          text: content,
+          sourceType: internalSourceType,
+          sourcePath: sourcePath || '',
+          metadataJson: metadata ? JSON.stringify(metadata) : undefined,
+        };
+
+        const id = await this.context.memory.addMemory(input);
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              success: true,
+              id,
+              message: 'Memory added successfully',
+            }),
+          }],
+        };
+      }
+    );
+
+    // search_project tool
+    this.server.registerTool(
+      'search_project',
+      {
+        description: 'Search the indexed project files for relevant code or content.',
+        inputSchema: {
+          query: z.string().min(1).describe('The search query'),
+          topK: z.number().int().min(1).max(100).default(20),
+          fileTypes: z.array(z.string()).optional().describe('File type filters'),
+          paths: z.array(z.string()).optional().describe('Path filters'),
+        },
+        annotations: { readOnlyHint: true },
+      },
+      async ({ query, topK, fileTypes, paths }: { query: string; topK: number; fileTypes?: string[]; paths?: string[] }) => {
+        if (!this.context.indexer) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                error: 'Project indexer not initialized',
+              }),
+            }],
+            isError: true,
+          };
+        }
+
+        // Pause indexing during search
+        if (this.context.indexer.isIndexerRunning()) {
+          this.context.indexer.pause();
+        }
+
+        try {
+          const results = await this.context.indexer.search(query, {
+            topK,
+            filters: {
+              fileTypes,
+              paths,
+            },
+          });
+
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                count: results.length,
+                chunks: results.map((r) => ({
+                  filePath: r.filePath,
+                  content: r.chunk.content,
+                  lineStart: r.lineStart,
+                  lineEnd: r.lineEnd,
+                  score: r.score,
+                })),
+              }),
+            }],
+          };
+        } finally {
+          if (this.context.indexer.isIndexerRunning()) {
+            this.context.indexer.resume();
+          }
+        }
+      }
+    );
+
+    // index_project tool
+    this.server.registerTool(
+      'index_project',
+      {
+        description: 'Trigger project indexing. Scans and indexes all supported files in the project.',
+        inputSchema: {
+          path: z.string().optional().describe('Directory to index'),
+          force: z.boolean().default(false).describe('Force re-indexing'),
+        },
+        annotations: { destructiveHint: true },
+      },
+      async ({ path, force }: { path?: string; force: boolean }) => {
+        if (!this.context.indexer) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                error: 'Project indexer not initialized',
+              }),
+            }],
+            isError: true,
+          };
+        }
+
+        if (force) {
+          this.context.indexer.clearIndex();
+        }
+
+        const indexPath = path || this.config.database.qdrantUrl || this.config.database.dbPath || process.cwd();
+        logger.info(`Indexing project: ${indexPath} (force: ${force})`);
+
+        try {
+          await this.context.indexer.start();
+
+          // Small delay to allow initial files to be processed
+          await new Promise(resolve => setTimeout(resolve, 500));
+
+          const stats = this.context.indexer.getStats();
+
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: true,
+                message: 'Indexing completed',
+                stats: {
+                  totalFiles: stats.totalFiles,
+                  indexedFiles: stats.indexedFiles,
+                  failedFiles: stats.failedFiles,
+                  totalChunks: stats.totalChunks,
+                  lastIndexing: stats.lastIndexing,
+                },
+              }),
+            }],
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                error: `Failed to index project: ${error instanceof Error ? error.message : 'Unknown error'}`,
+              }),
+            }],
+            isError: true,
+          };
+        }
+      }
+    );
   }
 
   /**
@@ -586,15 +357,19 @@ export class SuperMemoryServer {
    * Implements graceful degradation - server starts even if some components fail
    */
   async start(): Promise<void> {
+    if (this.initialized) {
+      logger.warn('Server already initialized');
+      return;
+    }
+
     try {
       // Initialize memory system (critical - without this, nothing works)
       try {
-        await this.context.memory.initialize(this.config.database.dbPath);
+        await this.context.memory.initialize(this.config.database.qdrantUrl || this.config.database.dbPath);
         logger.info('Memory system initialized');
       } catch (memError) {
         this.initError = memError instanceof Error ? memError : new Error(String(memError));
-        logger.error('Failed to initialize memory system', this.initError);
-        // Can't continue without memory system - throw to fail fast
+        logger.error('Failed to initialize memory system', { error: this.initError.message });
         throw new Error(`Memory system initialization failed: ${this.initError.message}`);
       }
 
@@ -605,53 +380,37 @@ export class SuperMemoryServer {
         await modelManager.acquire();
         logger.info('Model manager initialized (model preloaded)');
       } catch (modelError) {
-        logger.warn('Model manager initialization failed - embeddings will be generated on first request', modelError);
+        logger.warn('Model manager initialization failed - embeddings will be generated on first request', { error: modelError instanceof Error ? modelError.message : String(modelError) });
       }
 
       // Initialize project indexer (non-critical)
       try {
-        if (this.config.indexer) {
+        if (this.config.indexer && this.config.indexer.chunkSize) {
           this.context.indexer = new ProjectIndexer({
             rootPath: process.env.BOOMERANG_ROOT_PATH || process.cwd(),
             includePatterns: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.py', '**/*.md'],
-            excludePatterns: this.config.indexer.excludePatterns,
-            chunkSize: this.config.indexer.chunkSize,
-            chunkOverlap: this.config.indexer.chunkOverlap,
-            maxFileSize: this.config.indexer.maxFileSize,
-            workers: this.config.performance?.workers,
-            flushIntervalMs: this.config.performance?.flushIntervalMs,
-            flushThreshold: this.config.performance?.flushThreshold,
-            memoryThreshold: this.config.performance?.memoryThreshold,
-            maxBufferBytes: this.config.performance?.maxBufferBytes,
-          });
-
-          // Start the indexer in background - don't fail server startup
-          this.context.indexer.start().catch((error) => {
-            logger.error('Failed to start indexer', error);
+            excludePatterns: this.config.indexer.excludePatterns || ['node_modules', '.git', 'dist'],
+            chunkSize: this.config.indexer.chunkSize || 512,
+            chunkOverlap: this.config.indexer.chunkOverlap || 50,
+            maxFileSize: this.config.indexer.maxFileSize || 10 * 1024 * 1024,
           });
 
           logger.info('Project indexer initialized');
         }
       } catch (indexerError) {
-        logger.warn('Project indexer initialization failed - search_project tool may not work', indexerError);
-        // Don't throw - indexer is non-critical
+        logger.warn('Project indexer initialization failed - search_project tool may not work', { error: indexerError instanceof Error ? indexerError.message : String(indexerError) });
       }
 
-      // Connect to transport
+      // Start MCP server with stdio transport
       const transport = new StdioServerTransport();
       await this.server.connect(transport);
-      this.transportConnected = true;
-
-      // Store reference to transport for potential close detection
-      // Note: StdioServerTransport doesn't expose an on() method for close events
-      // We rely on the server's close handling instead
-
       this.initialized = true;
+
       logger.info('Super-Memory MCP Server started successfully');
     } catch (error) {
-      logger.error('Failed to start server', error);
-      this.initialized = false;
-      throw error;
+      this.initError = error instanceof Error ? error : new Error(String(error));
+      logger.error('Failed to initialize server', { error: this.initError.message });
+      throw this.initError;
     }
   }
 
@@ -675,7 +434,7 @@ export class SuperMemoryServer {
       await this.server.close();
       logger.info('Server shutdown complete');
     } catch (error) {
-      logger.error('Error during shutdown', error);
+      logger.error('Error during shutdown', { error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   }

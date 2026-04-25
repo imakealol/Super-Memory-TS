@@ -21,6 +21,7 @@ import {
   ENV_DEVICE,
   ENV_USE_GPU,
 } from './types.js';
+import { logger } from '../utils/logger.js';
 
 let instance: ModelManager | null = null;
 
@@ -92,7 +93,7 @@ export class ModelManager {
         if (this.extractor) return this.extractor;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        console.warn(`Model load attempt ${i + 1} failed, retrying...`, lastError.message);
+        logger.warn(`Model load attempt ${i + 1} failed, retrying...`, lastError.message);
         if (i < retries - 1) {
           await new Promise(r => setTimeout(r, 1000 * (i + 1)));
         }
@@ -164,11 +165,8 @@ export class ModelManager {
       }
 
       try {
-        // Cast options and return to any since @xenova/transformers types may not fully reflect runtime API
-        this.extractor = await pipeline('feature-extraction', modelId, {
-          dtype,
-          device,
-        } as any) as any;
+        // @ts-expect-error @xenova/transformers types don't fully reflect runtime API
+        this.extractor = await pipeline('feature-extraction', modelId, { dtype, device });
       } catch (error) {
         // DO NOT silently fallback - dimension mismatch causes crashes
         // Instead, throw a clear error that tells user to use CPU or fix GPU setup

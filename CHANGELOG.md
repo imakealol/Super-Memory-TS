@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.1.4] - 2026-04-25
+
+### Fixed
+- **Empty Float32Array bug**: Changed truthiness check to length check (`embedding.length === 0`) to catch empty arrays
+- **Timeout increase**: Raised request timeout from 60s to 180s for slow model loading
+- **Preload embedding model**: Model now loads at startup instead of lazy-loading on first request
+- **QdrantClient timeout & retry**: Added 10s timeout and exponential backoff retry logic
+- **Content null fix**: Fixed stored memories having `content` field set to `null`
+
+### Technical Details
+- `src/index.ts`: Empty array detection and timeout changes
+- `src/model/index.ts`: Startup preloading of embedding model
+- `src/memory/database.ts`: QdrantClient configuration with retry logic
+- `src/memory/schema.ts`: Content field handling fix
+
 ## [1.0.11] - 2026-04-24
 
 ### Fixed

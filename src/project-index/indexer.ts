@@ -147,9 +147,15 @@ export class ProjectIndexer extends EventEmitter {
     if (!this.db) {
       this.db = getDatabase();
     }
-    await this.db.initialize().catch(err => {
-      logger.error('Failed to initialize database', { error: err.message });
-    });
+    try {
+      await this.db.initialize();
+    } catch (err) {
+      logger.error('Failed to initialize database', { error: err instanceof Error ? err.message : String(err) });
+      this.isRunning = false;
+      throw new Error(
+        `Database initialization failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
 
     // Initialize snapshot index for incremental updates
     const snapshotRootPath = this.config.rootPath;
@@ -588,7 +594,7 @@ if (this.pendingChunks.length >= this.config.flushThreshold) {
           lineStart: chunkMeta.lineStart || 0,
           lineEnd: chunkMeta.lineEnd || 0,
         },
-        score: (entry as any)._similarity || 0,
+        score: entry.score ?? 0,
         filePath: entry.sourcePath || '',
         lineStart: chunkMeta.lineStart || 0,
         lineEnd: chunkMeta.lineEnd || 0,
