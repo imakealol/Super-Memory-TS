@@ -388,7 +388,7 @@ export class MemoryDatabase {
 
     await this.client.upsert(QDRANT_METADATA_COLLECTION, {
       points: [{
-        id: 'current',
+        id: '00000000-0000-0000-0000-000000000000',
         vector: [0],
         payload: { modelId, dimensions, updatedAt: Date.now() },
       }],
@@ -405,7 +405,7 @@ export class MemoryDatabase {
       if (!metaExists) return null;
 
       const result = await this.client.retrieve(QDRANT_METADATA_COLLECTION, {
-        ids: ['current'],
+        ids: ['00000000-0000-0000-0000-000000000000'],
         with_payload: true,
       });
 
