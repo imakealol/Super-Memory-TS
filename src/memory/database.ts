@@ -72,9 +72,24 @@ const clients: Map<string, QdrantClient> = new Map();
 
 function getClient(url: string): QdrantClient {
   if (!clients.has(url)) {
-    clients.set(url, new QdrantClient({ url }));
+    clients.set(url, new QdrantClient({ url, timeout: 10000 }));
   }
   return clients.get(url)!;
+}
+
+/**
+ * Retry wrapper for transient network errors
+ */
+async function withRetry<T>(operation: () => Promise<T>, retries = 3): Promise<T> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await operation();
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+    }
+  }
+  throw new Error('Unreachable');
 }
 
 /**
@@ -92,6 +107,7 @@ function toPoint(
     vector,
     payload: {
       [PAYLOAD_FIELDS.text]: entry.text,
+      [PAYLOAD_FIELDS.content]: entry.text,
       [PAYLOAD_FIELDS.sourceType]: entry.sourceType,
       [PAYLOAD_FIELDS.sourcePath]: entry.sourcePath ?? '',
       [PAYLOAD_FIELDS.timestamp]: timestamp,
@@ -155,18 +171,18 @@ export class MemoryDatabase {
     const embeddingDim = modelManager.getDimensions();
 
     // Check if collection exists
-    const collections = await this.client.getCollections();
+    const collections = await withRetry(() => this.client.getCollections());
     const exists = collections.collections.some(c => c.name === MEMORY_TABLE_NAME);
 
     if (!exists) {
       // Create collection with vector config
-      await this.client.createCollection(MEMORY_TABLE_NAME, {
+      await withRetry(() => this.client.createCollection(MEMORY_TABLE_NAME, {
         vectors: {
           size: embeddingDim,
           distance: 'Cosine',
         },
         hnsw_config: QDRANT_HNSW_CONFIG,
-      });
+      }));
 
       // Create payload indexes for fields used in filtering
       await this.createPayloadIndexes();
@@ -222,7 +238,7 @@ export class MemoryDatabase {
       return toPoint(id, embeddingResults[idx].embedding, entry, timestamp, contentHash);
     });
 
-    await this.client.upsert(MEMORY_TABLE_NAME, { points });
+    await withRetry(() => this.client.upsert(MEMORY_TABLE_NAME, { points }));
 
     return points.map(p => pointToMemoryEntry({
       ...p,
@@ -243,7 +259,7 @@ export class MemoryDatabase {
       : (await generateEmbeddings([input.text]))[0].embedding;
 
     const point = toPoint(id, vector, input, timestamp, contentHash);
-    await this.client.upsert(MEMORY_TABLE_NAME, { points: [point] });
+    await withRetry(() => this.client.upsert(MEMORY_TABLE_NAME, { points: [point] }));
 
     return id;
   }
@@ -252,11 +268,11 @@ export class MemoryDatabase {
    * Get a memory entry by ID
    */
   async getMemory(id: string): Promise<MemoryEntry | null> {
-    const results = await this.client.retrieve(MEMORY_TABLE_NAME, {
+    const results = await withRetry(() => this.client.retrieve(MEMORY_TABLE_NAME, {
       ids: [id],
       with_payload: true,
       with_vector: true,
-    });
+    }));
 
     if (results.length === 0) return null;
     return pointToMemoryEntry(results[0]);
@@ -266,9 +282,9 @@ export class MemoryDatabase {
    * Delete a memory entry by ID
    */
   async deleteMemory(id: string): Promise<void> {
-    await this.client.delete(MEMORY_TABLE_NAME, {
+    await withRetry(() => this.client.delete(MEMORY_TABLE_NAME, {
       points: [id],
-    });
+    }));
   }
 
   /**
@@ -289,12 +305,12 @@ export class MemoryDatabase {
     }
 
     // Count before delete
-    const countResult = await this.client.count(MEMORY_TABLE_NAME, {
+    const countResult = await withRetry(() => this.client.count(MEMORY_TABLE_NAME, {
       filter,
       exact: true,
-    });
+    }));
 
-    await this.client.delete(MEMORY_TABLE_NAME, { filter });
+    await withRetry(() => this.client.delete(MEMORY_TABLE_NAME, { filter }));
 
     return countResult.count;
   }
@@ -311,13 +327,13 @@ export class MemoryDatabase {
     const queryVector = Array.isArray(vector) ? vector : Array.from(vector);
     const filter = buildPayloadFilter(opts.filter);
 
-    const results = await this.client.search(MEMORY_TABLE_NAME, {
+    const results = await withRetry(() => this.client.search(MEMORY_TABLE_NAME, {
       vector: queryVector,
       limit: topK * 2,
       filter,
       with_payload: true,
       with_vector: true,
-    });
+    }));
 
     // Deduplicate by contentHash and return topK
     const seen = new Set<string>();
@@ -341,12 +357,12 @@ export class MemoryDatabase {
   async listMemories(filter?: SearchFilter): Promise<MemoryEntry[]> {
     const qdrantFilter = buildPayloadFilter(filter);
 
-    const results = await this.client.scroll(MEMORY_TABLE_NAME, {
+    const results = await withRetry(() => this.client.scroll(MEMORY_TABLE_NAME, {
       filter: qdrantFilter,
       limit: 100,
       with_payload: true,
       with_vector: true,
-    });
+    }));
 
     return results.points.map(p => pointToMemoryEntry(p));
   }
@@ -355,7 +371,7 @@ export class MemoryDatabase {
    * Get count of memories
    */
   async countMemories(): Promise<number> {
-    const result = await this.client.count(MEMORY_TABLE_NAME, { exact: true });
+    const result = await withRetry(() => this.client.count(MEMORY_TABLE_NAME, { exact: true }));
     return result.count;
   }
 
@@ -363,12 +379,12 @@ export class MemoryDatabase {
    * Check if content already exists (by hash)
    */
   async contentExists(hash: string): Promise<boolean> {
-    const result = await this.client.count(MEMORY_TABLE_NAME, {
+    const result = await withRetry(() => this.client.count(MEMORY_TABLE_NAME, {
       filter: {
         must: [{ key: PAYLOAD_FIELDS.contentHash, match: { value: hash } }],
       },
       exact: true,
-    });
+    }));
     return result.count > 0;
   }
 
@@ -377,22 +393,22 @@ export class MemoryDatabase {
    */
   async storeModelMetadata(modelId: string, dimensions: number): Promise<void> {
     // Ensure metadata collection exists
-    const collections = await this.client.getCollections();
+    const collections = await withRetry(() => this.client.getCollections());
     const metaExists = collections.collections.some(c => c.name === QDRANT_METADATA_COLLECTION);
 
     if (!metaExists) {
-      await this.client.createCollection(QDRANT_METADATA_COLLECTION, {
+      await withRetry(() => this.client.createCollection(QDRANT_METADATA_COLLECTION, {
         vectors: { size: 1, distance: 'Cosine' }, // Dummy vector for single-point collection
-      });
+      }));
     }
 
-    await this.client.upsert(QDRANT_METADATA_COLLECTION, {
+    await withRetry(() => this.client.upsert(QDRANT_METADATA_COLLECTION, {
       points: [{
         id: '00000000-0000-0000-0000-000000000000',
         vector: [0],
         payload: { modelId, dimensions, updatedAt: Date.now() },
       }],
-    });
+    }));
   }
 
   /**
@@ -400,14 +416,14 @@ export class MemoryDatabase {
    */
   async getStoredModelMetadata(): Promise<{ modelId: string; dimensions: number } | null> {
     try {
-      const collections = await this.client.getCollections();
+      const collections = await withRetry(() => this.client.getCollections());
       const metaExists = collections.collections.some(c => c.name === QDRANT_METADATA_COLLECTION);
       if (!metaExists) return null;
 
-      const result = await this.client.retrieve(QDRANT_METADATA_COLLECTION, {
+      const result = await withRetry(() => this.client.retrieve(QDRANT_METADATA_COLLECTION, {
         ids: ['00000000-0000-0000-0000-000000000000'],
         with_payload: true,
-      });
+      }));
 
       if (result.length === 0 || !result[0].payload) return null;
 

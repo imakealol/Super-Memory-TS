@@ -101,6 +101,7 @@ export const QDRANT_HNSW_CONFIG = {
  */
 export const PAYLOAD_FIELDS = {
   text: 'text',
+  content: 'content',
   sourceType: 'sourceType',
   sourcePath: 'sourcePath',
   timestamp: 'timestamp',
