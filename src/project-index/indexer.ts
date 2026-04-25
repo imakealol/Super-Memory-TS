@@ -32,7 +32,7 @@ import type {
 
 // File types and directories to skip during indexing
 const SKIP_EXTENSIONS = new Set(['.db', '.har', '.db-journal', '.db-wal', '.sqlite', '.sqlite3']);
-const SKIP_DIRS = new Set(['lancedb', 'node_modules', '.git', 'dist', 'build', '.cache', '__pycache__']);
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.cache', '__pycache__']);
 
 // Memory management constants
 const MAX_FILE_SIZE_MB = 5; // Skip files larger than 5MB
@@ -368,7 +368,7 @@ export class ProjectIndexer extends EventEmitter {
   async processFile(filePath: string, precomputedHash?: string): Promise<void> {
     // Skip bad files at processFile level as safeguard
     const SKIP_EXTS = new Set(['.db', '.har', '.db-journal', '.db-wal', '.tmp']);
-    const SKIP_DIRS = ['lancedb', 'node_modules', '.git', 'dist', 'build'];
+    const SKIP_DIRS = ['node_modules', '.git', 'dist', 'build'];
     if (SKIP_EXTS.has(extname(filePath).toLowerCase())) return;
     if (SKIP_DIRS.some(d => filePath.includes(d))) return;
 

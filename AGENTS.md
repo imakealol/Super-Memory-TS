@@ -79,12 +79,31 @@ Super-Memory-TS/
 
 ---
 
+## Database Backend
+
+**v2.0.0+**: Uses Qdrant (`@qdrant/js-client-rest`) instead of LanceDB.
+
+### Running Qdrant
+
+```bash
+docker run -p 6333:6333 -v $(pwd)/qdrant_storage:/qdrant/storage qdrant/qdrant
+```
+
+### Configuration
+
+```bash
+export QDRANT_URL=http://localhost:6333  # default
+```
+
+---
+
 ## Review Notes
 
-- **2025-04-23**: GitHub repo created, git initialized, workflow added
+- **2025-04-24**: Migrated from LanceDB to Qdrant for v2.0.0
+- **Breaking change**: `uri` parameter is now a Qdrant URL (e.g., `http://localhost:6333`) instead of filesystem path
+- **Removed**: Global write queues (Qdrant handles concurrency natively)
 - **Build**: `tsc` compiles successfully
 - **Quality**: All checks (typecheck, build) passing
-- **Blocker resolved**: Was previously a local directory without any git repository
 
 ---
 

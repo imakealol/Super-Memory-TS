@@ -1,14 +1,14 @@
 /**
  * Memory Storage Layer
  *
- * Complete memory system with LanceDB storage and HNSW indexing,
+ * Complete memory system with Qdrant storage and HNSW indexing,
  * supporting TIERED, VECTOR_ONLY, and TEXT_ONLY search strategies.
  */
 
 // Schema and types
 export {
   MEMORY_TABLE_NAME,
-  HNSW_CONFIG,
+  QDRANT_HNSW_CONFIG,
   DEFAULT_SEARCH_OPTIONS,
   type MemoryEntry,
   type MemoryEntryInput,

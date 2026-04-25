@@ -2,7 +2,7 @@
  * Memory Search Layer
  * 
  * Implements TIERED, VECTOR_ONLY, and TEXT_ONLY search strategies
- * using LanceDB for vector search and Fuse.js for text search.
+ * using Qdrant for vector search and Fuse.js for text search.
  */
 
 import Fuse, { type IFuseOptions } from 'fuse.js';

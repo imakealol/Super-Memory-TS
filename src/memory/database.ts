@@ -1,13 +1,18 @@
 /**
  * Memory Database Layer
- * 
- * Handles LanceDB operations for memory storage with HNSW indexing.
+ *
+ * Handles Qdrant operations for memory storage with HNSW indexing.
+ * Replaces LanceDB with native Qdrant client for better concurrency handling.
  */
 
-import { connect, Index, type Connection, type Table } from '@lancedb/lancedb';
+import { QdrantClient, type Schemas } from '@qdrant/js-client-rest';
 import { randomUUID, createHash } from 'crypto';
 import {
   MEMORY_TABLE_NAME,
+  QDRANT_METADATA_COLLECTION,
+  DEFAULT_QDRANT_URL,
+  QDRANT_HNSW_CONFIG,
+  PAYLOAD_FIELDS,
   DEFAULT_SEARCH_OPTIONS,
   type MemoryEntry,
   type MemoryEntryInput,
@@ -15,26 +20,8 @@ import {
   type SearchFilter,
   type MemorySourceType,
 } from './schema.js';
-import { resolve } from 'path';
 import { ModelManager } from '../model/index.js';
 import { generateEmbeddings } from '../model/embeddings.js';
-
-/**
- * Global write queues per database path (prevents concurrent LanceDB writes)
- */
-const globalWriteQueues = new Map<string, Promise<void>>();
-
-function getGlobalQueue(uri: string): Promise<void> {
-  const normalized = resolve(uri);
-  if (!globalWriteQueues.has(normalized)) {
-    globalWriteQueues.set(normalized, Promise.resolve());
-  }
-  return globalWriteQueues.get(normalized)!;
-}
-
-function setGlobalQueue(uri: string, promise: Promise<void>): void {
-  globalWriteQueues.set(resolve(uri), promise);
-}
 
 // Re-export for external consumers
 export type { MemoryEntryInput } from './schema.js';
@@ -47,366 +34,269 @@ function computeHash(text: string): string {
 }
 
 /**
- * LanceDB connection instance (per-URI)
+ * Build Qdrant filter from SearchFilter
  */
-const connections: Map<string, Connection> = new Map();
+function buildPayloadFilter(filter?: SearchFilter): Record<string, unknown> | undefined {
+  if (!filter) return undefined;
+
+  const conditions: Record<string, unknown>[] = [];
+
+  if (filter.sourceType) {
+    conditions.push({
+      key: PAYLOAD_FIELDS.sourceType,
+      match: { value: filter.sourceType },
+    });
+  }
+
+  if (filter.sessionId) {
+    conditions.push({
+      key: PAYLOAD_FIELDS.sessionId,
+      match: { value: filter.sessionId },
+    });
+  }
+
+  if (filter.since) {
+    conditions.push({
+      key: PAYLOAD_FIELDS.timestamp,
+      range: { gte: filter.since.getTime() },
+    });
+  }
+
+  if (conditions.length === 0) return undefined;
+  return { must: conditions };
+}
+
+// --- Client Cache ---
+
+const clients: Map<string, QdrantClient> = new Map();
+
+function getClient(url: string): QdrantClient {
+  if (!clients.has(url)) {
+    clients.set(url, new QdrantClient({ url }));
+  }
+  return clients.get(url)!;
+}
 
 /**
- * Cached table reference (per-URI)
+ * Convert MemoryEntryInput + generated fields → Qdrant PointStruct
  */
-const tables: Map<string, Table> = new Map();
+function toPoint(
+  id: string,
+  vector: number[],
+  entry: MemoryEntryInput,
+  timestamp: number,
+  contentHash: string
+): Schemas['PointStruct'] {
+  return {
+    id,
+    vector,
+    payload: {
+      [PAYLOAD_FIELDS.text]: entry.text,
+      [PAYLOAD_FIELDS.sourceType]: entry.sourceType,
+      [PAYLOAD_FIELDS.sourcePath]: entry.sourcePath ?? '',
+      [PAYLOAD_FIELDS.timestamp]: timestamp,
+      [PAYLOAD_FIELDS.contentHash]: contentHash,
+      [PAYLOAD_FIELDS.metadataJson]: entry.metadataJson ?? '',
+      [PAYLOAD_FIELDS.sessionId]: entry.sessionId ?? '',
+    },
+  };
+}
 
 /**
- * Track if index has been created for each URI
+ * Convert Qdrant ScoredPoint/Record → MemoryEntry
  */
-const indexCreated: Map<string, boolean> = new Map();
+function pointToMemoryEntry(point: Schemas['ScoredPoint'] | Schemas['Record']): MemoryEntry {
+  const payload = point.payload ?? {};
 
-/**
- * Reference count for connections (prevents premature close)
- */
-const connectionRefCount: Map<string, number> = new Map();
+  // Vector may be number[] (default vector) or Record<string, number[]> (named vectors)
+  let vector: Float32Array;
+  if (Array.isArray(point.vector)) {
+    vector = new Float32Array(point.vector as number[]);
+  } else if (point.vector && typeof point.vector === 'object') {
+    // Named vectors — extract default
+    const vec = (point.vector as Record<string, number[]>).default;
+    vector = new Float32Array(vec ?? []);
+  } else {
+    vector = new Float32Array();
+  }
 
-/**
- * Model metadata table name
- */
-const MODEL_METADATA_TABLE = 'model_metadata';
+  const ts = payload[PAYLOAD_FIELDS.timestamp];
 
-/**
- * MemoryDatabase class for CRUD operations on memories
- */
+  return {
+    id: String(point.id),
+    text: (payload[PAYLOAD_FIELDS.text] as string) ?? '',
+    vector,
+    sourceType: (payload[PAYLOAD_FIELDS.sourceType] as MemorySourceType) ?? 'session',
+    sourcePath: (payload[PAYLOAD_FIELDS.sourcePath] as string) || undefined,
+    timestamp: ts ? new Date(ts as number) : new Date(),
+    contentHash: (payload[PAYLOAD_FIELDS.contentHash] as string) ?? '',
+    metadataJson: (payload[PAYLOAD_FIELDS.metadataJson] as string) || undefined,
+    sessionId: (payload[PAYLOAD_FIELDS.sessionId] as string) || undefined,
+  };
+}
+
+// --- Database Class ---
+
 export class MemoryDatabase {
-  private uri: string;
   private initialized: boolean = false;
+  private client: QdrantClient;
 
-  /**
-   * Execute a write operation sequentially through the global queue.
-   * Uses global mutex per database path to prevent concurrent LanceDB writes
-   * which cause "Commit conflict for version X" errors.
-   */
-  private async enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
-    const currentQueue = getGlobalQueue(this.uri);
-    const newQueue = currentQueue.then(async () => {
-      return operation();
-    });
-    setGlobalQueue(this.uri, newQueue.then(() => {}).catch(() => {}));
-    return newQueue;
-  }
-
-  constructor(uri: string = './memory_data') {
-    this.uri = uri;
+  constructor(url: string = DEFAULT_QDRANT_URL) {
+    this.client = getClient(url);
   }
 
   /**
-   * Add multiple memories in a single transaction (batch insert).
-   * More efficient than individual adds when dealing with multiple chunks.
-   */
-  async addMemories(entries: MemoryEntryInput[]): Promise<MemoryEntry[]> {
-    return this.enqueueWrite(async () => {
-      const memoryTable = this.getTable();
-      const timestamp = Date.now();
-      const timestampISO = new Date(timestamp).toISOString();
-
-      // Generate embeddings for all entries
-      const texts = entries.map(e => e.text);
-      const embeddingResults = await generateEmbeddings(texts);
-
-      const records = entries.map((entry, idx) => {
-        const contentHash = computeHash(entry.text);
-        return {
-          id: randomUUID(),
-          text: entry.text,
-          vector: embeddingResults[idx].embedding,
-          sourceType: entry.sourceType,
-          sourcePath: entry.sourcePath ?? '',
-          timestamp,
-          contentHash,
-          metadataJson: entry.metadataJson ?? '',
-          sessionId: entry.sessionId ?? '',
-        };
-      });
-
-      // Insert all in one transaction
-      await memoryTable.add(records);
-
-      // Try to create index after first data insertion
-      await this.ensureIndex();
-
-      // Return as MemoryEntry with proper types
-      return records.map(r => ({
-        id: r.id,
-        text: r.text,
-        vector: new Float32Array(r.vector),
-        sourceType: r.sourceType as MemorySourceType,
-        sourcePath: r.sourcePath,
-        timestamp: new Date(timestampISO),
-        contentHash: r.contentHash,
-        metadataJson: r.metadataJson,
-        sessionId: r.sessionId,
-      }));
-    });
-  }
-
-  /**
-   * Delete all memories from a specific source path.
-   * Useful for cleaning up file chunks when a file changes.
-   */
-  async deleteBySourcePath(sourcePath: string, sourceType?: string): Promise<number> {
-    return this.enqueueWrite(async () => {
-      const memoryTable = this.getTable();
-      let deletedCount = 0;
-
-      // Build query to find entries with this source path
-      const filter = sourceType
-        ? `"sourcePath" = '${sourcePath}' AND "sourceType" = '${sourceType}'`
-        : `"sourcePath" = '${sourcePath}'`;
-
-      // Query and delete in batches to avoid overwhelming the database
-      let hasMore = true;
-      while (hasMore) {
-        const results = await memoryTable.query()
-          .where(filter)
-          .limit(100)
-          .toArray();
-
-        if (results.length === 0) {
-          hasMore = false;
-          break;
-        }
-
-        for (const row of results) {
-          await memoryTable.delete(`id = '${row.id}'`);
-          deletedCount++;
-        }
-
-        // If we got fewer than limit, we're done
-        if (results.length < 100) {
-          hasMore = false;
-        }
-      }
-
-      return deletedCount;
-    });
-  }
-
-  /**
-   * Get the table for this instance
-   */
-  private getTable(): Table {
-    const table = tables.get(this.uri);
-    if (!table) {
-      throw new Error('Database not initialized. Call initialize() first.');
-    }
-    return table;
-  }
-
-  /**
-   * Initialize the LanceDB connection and table
-   * Note: We do NOT create the index here - it will be created lazily on first data insertion
-   * This avoids the "KMeans: can not train 1 centroids with 0 vectors" error
+   * Initialize the Qdrant collection
    */
   async initialize(): Promise<void> {
-    if (this.initialized) {
-      return;
-    }
+    if (this.initialized) return;
 
-    const db = await connect(this.uri);
-    connections.set(this.uri, db);
+    const modelManager = ModelManager.getInstance();
+    const embeddingDim = modelManager.getDimensions();
 
-    // Initialize reference count for this URI
-    const currentCount = connectionRefCount.get(this.uri) || 0;
-    connectionRefCount.set(this.uri, currentCount + 1);
+    // Check if collection exists
+    const collections = await this.client.getCollections();
+    const exists = collections.collections.some(c => c.name === MEMORY_TABLE_NAME);
 
-    // Create table if it doesn't exist (empty table is fine - index will be created later)
-    const tableNames = await db.tableNames();
-    if (!tableNames.includes(MEMORY_TABLE_NAME)) {
-      // Get the actual embedding dimension from the model (BGE-Large=1024, MiniLM=384)
-      const modelManager = ModelManager.getInstance();
-      const embeddingDim = modelManager.getDimensions();
-
-      // Create empty table with schema definition
-      // Use explicit schema to avoid Arrow type inference issues
-      await db.createTable(MEMORY_TABLE_NAME, [
-        {
-          id: 'temp',
-          text: '',
-          vector: Array(embeddingDim).fill(0),
-          sourceType: 'session',
-          sourcePath: '',
-          timestamp: Date.now(),
-          contentHash: '',
-          metadataJson: '',
-          sessionId: '',
+    if (!exists) {
+      // Create collection with vector config
+      await this.client.createCollection(MEMORY_TABLE_NAME, {
+        vectors: {
+          size: embeddingDim,
+          distance: 'Cosine',
+          hnsw_config: QDRANT_HNSW_CONFIG,
         },
-      ]);
-
-      // Delete the temp row - we want an empty table
-      // Note: We create with data to get proper schema, then delete
-      const tempTable = await db.openTable(MEMORY_TABLE_NAME);
-      await tempTable.delete("id = 'temp'");
-
-      // Store model metadata for future validation
-      await this.storeModelMetadata(modelManager.getMetadata().modelId, embeddingDim);
-    } else {
-      // Table exists - validate model dimensions match
-      const modelManager = ModelManager.getInstance();
-      const currentDimensions = modelManager.getDimensions();
-
-      // Check stored metadata against current model
-      const storedMeta = await this.getStoredModelMetadata();
-      if (storedMeta && storedMeta.dimensions !== currentDimensions) {
-        // Dimension mismatch - drop and recreate table
-        console.warn(`Model dimension mismatch: stored=${storedMeta.dimensions}, current=${currentDimensions}`);
-        console.warn('Dropping existing table and recreating with new dimensions...');
-
-        await db.dropTable(MEMORY_TABLE_NAME);
-
-        // Recreate table with correct dimensions
-        const embeddingDim = currentDimensions;
-        await db.createTable(MEMORY_TABLE_NAME, [
-          {
-            id: 'temp',
-            text: '',
-            vector: Array(embeddingDim).fill(0),
-            sourceType: 'session',
-            sourcePath: '',
-            timestamp: Date.now(),
-            contentHash: '',
-            metadataJson: '',
-            sessionId: '',
-          },
-        ]);
-
-        const tempTable = await db.openTable(MEMORY_TABLE_NAME);
-        await tempTable.delete("id = 'temp'");
-
-        // Store updated model metadata
-        await this.storeModelMetadata(modelManager.getMetadata().modelId, embeddingDim);
-      }
-    }
-
-    const memoryTable = await db.openTable(MEMORY_TABLE_NAME);
-    tables.set(this.uri, memoryTable);
-    indexCreated.set(this.uri, false);
-    this.initialized = true;
-
-    // NOTE: We do NOT call ensureIndex() here anymore
-    // Index creation is deferred to first addMemory() call
-    // This prevents "KMeans: can not train 1 centroids with 0 vectors" error
-  }
-
-  /**
-   * Ensure HNSW index exists on vector column
-   * Called lazily on first data insertion to avoid empty table index error
-   */
-  async ensureIndex(): Promise<void> {
-    const memoryTable = this.getTable();
-
-    // Skip if index already created or table is empty
-    if (indexCreated.get(this.uri)) {
-      return;
-    }
-
-    try {
-      const count = await memoryTable.countRows();
-      if (count === 0) {
-        // Table is empty - skip index creation, will be created on first insert
-        return;
-      }
-
-      const schema = await memoryTable.schema();
-      const vectorField = schema.fields.find(f => f.name === 'vector');
-
-      if (!vectorField) {
-        throw new Error('Vector field not found in schema');
-      }
-
-      // Create HNSW-SQ index for fast vector search
-      await memoryTable.createIndex('vector', {
-        config: Index.hnswSq({
-          distanceType: 'cosine',
-          m: 16,
-          efConstruction: 128,
-        }),
-        replace: true,
       });
 
-      indexCreated.set(this.uri, true);
-    } catch (err) {
-      // Index creation failed - which might mean it already exists or there's an issue
-      // Log warning but continue - the index might be created later
-      console.warn('Index creation warning:', err);
+      // Create payload indexes for fields used in filtering
+      await this.createPayloadIndexes();
+
+      // Store model metadata
+      await this.storeModelMetadata(modelManager.getMetadata().modelId, embeddingDim);
+    } else {
+      // Validate dimensions match
+      await this.validateModelDimensions(embeddingDim);
+    }
+
+    this.initialized = true;
+  }
+
+  /**
+   * Create payload indexes for filter fields
+   */
+  private async createPayloadIndexes(): Promise<void> {
+    const indexFields = [
+      { field: PAYLOAD_FIELDS.sourceType, type: 'keyword' as const },
+      { field: PAYLOAD_FIELDS.sourcePath, type: 'keyword' as const },
+      { field: PAYLOAD_FIELDS.sessionId, type: 'keyword' as const },
+      { field: PAYLOAD_FIELDS.contentHash, type: 'keyword' as const },
+      { field: PAYLOAD_FIELDS.timestamp, type: 'integer' as const },
+    ];
+
+    for (const { field, type } of indexFields) {
+      try {
+        await this.client.createPayloadIndex(MEMORY_TABLE_NAME, {
+          field_name: field,
+          field_schema: type,
+        });
+      } catch (err) {
+        // Index may already exist — non-fatal
+        console.warn(`Payload index warning for ${field}:`, err);
+      }
     }
   }
 
   /**
-   * Add a new memory entry
-   *
-   * @returns The ID of the newly created memory
+   * Add multiple memories in a single batch
+   */
+  async addMemories(entries: MemoryEntryInput[]): Promise<MemoryEntry[]> {
+    const timestamp = Date.now();
+
+    // Generate embeddings for all entries
+    const texts = entries.map(e => e.text);
+    const embeddingResults = await generateEmbeddings(texts);
+
+    const points = entries.map((entry, idx) => {
+      const contentHash = computeHash(entry.text);
+      const id = randomUUID();
+      return toPoint(id, embeddingResults[idx].embedding, entry, timestamp, contentHash);
+    });
+
+    await this.client.upsert(MEMORY_TABLE_NAME, { points });
+
+    return points.map(p => pointToMemoryEntry({
+      ...p,
+      payload: p.payload as Record<string, unknown>,
+    } as Schemas['ScoredPoint']));
+  }
+
+  /**
+   * Add a single memory entry
    */
   async addMemory(input: MemoryEntryInput): Promise<string> {
-    return this.enqueueWrite(async () => {
-      const memoryTable = this.getTable();
+    const id = randomUUID();
+    const timestamp = Date.now();
+    const contentHash = computeHash(input.text);
 
-      const id = randomUUID();
-      const timestamp = Date.now();
-      const contentHash = computeHash(input.text);
+    const vector = input.vector
+      ? Array.isArray(input.vector) ? input.vector : Array.from(input.vector)
+      : (await generateEmbeddings([input.text]))[0].embedding;
 
-      // Ensure vector is a regular array for LanceDB compatibility
-      const vectorArray = Array.isArray(input.vector)
-        ? input.vector
-        : input.vector
-        ? Array.from(input.vector)
-        : [];
+    const point = toPoint(id, vector, input, timestamp, contentHash);
+    await this.client.upsert(MEMORY_TABLE_NAME, { points: [point] });
 
-      const entry = {
-        id,
-        text: input.text,
-        vector: vectorArray,
-        sourceType: input.sourceType,
-        sourcePath: input.sourcePath ?? '',
-        timestamp,
-        contentHash,
-        metadataJson: input.metadataJson ?? '',
-        sessionId: input.sessionId ?? '',
-      };
-
-      await memoryTable.add([entry]);
-
-      // Try to create index after first data insertion
-      // This is safe because table now has data
-      await this.ensureIndex();
-
-      return id;
-    });
+    return id;
   }
 
   /**
    * Get a memory entry by ID
    */
   async getMemory(id: string): Promise<MemoryEntry | null> {
-    const memoryTable = this.getTable();
+    const results = await this.client.retrieve(MEMORY_TABLE_NAME, {
+      ids: [id],
+      with_payload: true,
+      with_vector: true,
+    });
 
-    const results = await memoryTable
-      .query()
-      .where(`id = '${id}'`)
-      .limit(1)
-      .toArray();
-
-    if (results.length === 0) {
-      return null;
-    }
-
-    return this.rowToMemoryEntry(results[0]);
+    if (results.length === 0) return null;
+    return pointToMemoryEntry(results[0]);
   }
 
   /**
    * Delete a memory entry by ID
    */
   async deleteMemory(id: string): Promise<void> {
-    return this.enqueueWrite(async () => {
-      const memoryTable = this.getTable();
-      await memoryTable.delete(`id = '${id}'`);
+    await this.client.delete(MEMORY_TABLE_NAME, {
+      points: [id],
     });
+  }
+
+  /**
+   * Delete all memories from a specific source path
+   */
+  async deleteBySourcePath(sourcePath: string, sourceType?: string): Promise<number> {
+    const filter: Record<string, unknown> = {
+      must: [
+        { key: PAYLOAD_FIELDS.sourcePath, match: { value: sourcePath } },
+      ],
+    };
+
+    if (sourceType) {
+      (filter.must as Array<unknown>).push({
+        key: PAYLOAD_FIELDS.sourceType,
+        match: { value: sourceType },
+      });
+    }
+
+    // Count before delete
+    const countResult = await this.client.count(MEMORY_TABLE_NAME, {
+      filter,
+      exact: true,
+    });
+
+    await this.client.delete(MEMORY_TABLE_NAME, { filter });
+
+    return countResult.count;
   }
 
   /**
@@ -416,55 +306,29 @@ export class MemoryDatabase {
     vector: Float32Array | number[],
     options: SearchOptions = {}
   ): Promise<MemoryEntry[]> {
-    const memoryTable = this.getTable();
-
     const opts = { ...DEFAULT_SEARCH_OPTIONS, ...options };
     const topK = Math.min(opts.topK ?? 5, 20);
-
-    // Convert vector to array if needed
     const queryVector = Array.isArray(vector) ? vector : Array.from(vector);
+    const filter = buildPayloadFilter(opts.filter);
 
-    // Build query with vector search
-    let query = memoryTable
-      .query()
-      .nearestTo(queryVector)
-      .limit(topK * 2);
-
-    // Apply filters if provided
-    if (opts.filter) {
-      const conditions: string[] = [];
-
-      if (opts.filter.sourceType) {
-        conditions.push(`"sourceType" = '${opts.filter.sourceType}'`);
-      }
-      if (opts.filter.sessionId) {
-        conditions.push(`"sessionId" = '${opts.filter.sessionId}'`);
-      }
-      if (opts.filter.since) {
-        conditions.push(`timestamp >= ${opts.filter.since.getTime()}`);
-      }
-
-      if (conditions.length > 0) {
-        query = query.where(conditions.join(' AND '));
-      }
-    }
-
-    const results = await query.toArray();
-
-    // Convert vectors and sort by similarity (nearestTo returns sorted by distance)
-    const entries = results.map((r) => this.rowToMemoryEntry(r));
+    const results = await this.client.search(MEMORY_TABLE_NAME, {
+      vector: queryVector,
+      limit: topK * 2,
+      filter,
+      with_payload: true,
+      with_vector: true,
+    });
 
     // Deduplicate by contentHash and return topK
     const seen = new Set<string>();
     const deduped: MemoryEntry[] = [];
 
-    for (const entry of entries) {
+    for (const result of results) {
+      const entry = pointToMemoryEntry(result);
       if (!seen.has(entry.contentHash)) {
         seen.add(entry.contentHash);
         deduped.push(entry);
-        if (deduped.length >= topK) {
-          break;
-        }
+        if (deduped.length >= topK) break;
       }
     }
 
@@ -475,166 +339,81 @@ export class MemoryDatabase {
    * List all memories with optional filter
    */
   async listMemories(filter?: SearchFilter): Promise<MemoryEntry[]> {
-    const memoryTable = this.getTable();
+    const qdrantFilter = buildPayloadFilter(filter);
 
-    let query = memoryTable.query();
+    const results = await this.client.scroll(MEMORY_TABLE_NAME, {
+      filter: qdrantFilter,
+      limit: 100,
+      with_payload: true,
+      with_vector: true,
+    });
 
-    if (filter?.sourceType) {
-      query = query.where(`"sourceType" = '${filter.sourceType}'`);
-    }
-    if (filter?.sessionId) {
-      query = query.where(`"sessionId" = '${filter.sessionId}'`);
-    }
-    if (filter?.since) {
-      query = query.where(`timestamp >= ${filter.since.getTime()}`);
-    }
-
-    const results = await query.limit(100).toArray();
-    return results.map((r) => this.rowToMemoryEntry(r));
+    return results.points.map(p => pointToMemoryEntry(p));
   }
 
   /**
    * Get count of memories
    */
   async countMemories(): Promise<number> {
-    const memoryTable = this.getTable();
-    return memoryTable.countRows();
+    const result = await this.client.count(MEMORY_TABLE_NAME, { exact: true });
+    return result.count;
   }
 
   /**
    * Check if content already exists (by hash)
    */
   async contentExists(hash: string): Promise<boolean> {
-    const memoryTable = this.getTable();
-
-    const results = await memoryTable
-      .query()
-      .where(`"contentHash" = '${hash}'`)
-      .limit(1)
-      .toArray();
-
-    return results.length > 0;
+    const result = await this.client.count(MEMORY_TABLE_NAME, {
+      filter: {
+        must: [{ key: PAYLOAD_FIELDS.contentHash, match: { value: hash } }],
+      },
+      exact: true,
+    });
+    return result.count > 0;
   }
 
   /**
-   * Convert a database row to a MemoryEntry
-   */
-  private rowToMemoryEntry(row: Record<string, unknown>): MemoryEntry {
-    const vectorData = row.vector;
-    let vector: Float32Array;
-
-    if (Array.isArray(vectorData)) {
-      vector = new Float32Array(vectorData as number[]);
-    } else if (vectorData instanceof Float32Array) {
-      vector = vectorData;
-    } else if (typeof vectorData === 'object' && vectorData !== null && 'length' in vectorData) {
-      // Handle TypedArray-like objects (Buffer, ArrayBufferView, etc.)
-      const arr = Array.from(vectorData as unknown as ArrayLike<number>);
-      vector = new Float32Array(arr);
-    } else {
-      throw new Error(`Invalid vector format in database: ${typeof vectorData}`);
-    }
-
-    return {
-      id: row.id as string,
-      text: row.text as string,
-      vector,
-      sourceType: row.sourceType as MemorySourceType,
-      sourcePath: row.sourcePath as string | undefined,
-      timestamp: new Date(row.timestamp as string),
-      contentHash: row.contentHash as string,
-      metadataJson: row.metadataJson as string | undefined,
-      sessionId: row.sessionId as string | undefined,
-    };
-  }
-
-  /**
-   * Close the database connection
-   * Only actually closes when reference count reaches 0
-   */
-  async close(): Promise<void> {
-    const currentCount = connectionRefCount.get(this.uri) || 0;
-
-    if (currentCount <= 1) {
-      // Last reference - actually close
-      const db = connections.get(this.uri);
-      if (db) {
-        try {
-          await db.close();
-        } catch (err) {
-          console.warn('Error closing database connection:', err);
-        }
-        connections.delete(this.uri);
-        tables.delete(this.uri);
-        indexCreated.delete(this.uri);
-        connectionRefCount.delete(this.uri);
-      }
-    } else {
-      // Decrement reference count
-      connectionRefCount.set(this.uri, currentCount - 1);
-    }
-
-    this.initialized = false;
-  }
-
-  /**
-   * Store model metadata in the database
+   * Store model metadata in dedicated collection
    */
   async storeModelMetadata(modelId: string, dimensions: number): Promise<void> {
-    return this.enqueueWrite(async () => {
-      const db = connections.get(this.uri);
-      if (!db) return;
+    // Ensure metadata collection exists
+    const collections = await this.client.getCollections();
+    const metaExists = collections.collections.some(c => c.name === QDRANT_METADATA_COLLECTION);
 
-      // Create metadata table if it doesn't exist
-      const tableNames = await db.tableNames();
-      if (!tableNames.includes(MODEL_METADATA_TABLE)) {
-        await db.createTable(MODEL_METADATA_TABLE, [
-          {
-            key: 'current',
-            modelId,
-            dimensions,
-            createdAt: Date.now(),
-          },
-        ]);
-      } else {
-        // Update existing metadata using SQL WHERE clause
-        const metaTable = await db.openTable(MODEL_METADATA_TABLE);
-        await metaTable.update({
-          values: {
-            modelId,
-            dimensions,
-            createdAt: Date.now(),
-          },
-          where: `key = 'current'`,
-        });
-      }
+    if (!metaExists) {
+      await this.client.createCollection(QDRANT_METADATA_COLLECTION, {
+        vectors: { size: 1, distance: 'Cosine' }, // Dummy vector for single-point collection
+      });
+    }
+
+    await this.client.upsert(QDRANT_METADATA_COLLECTION, {
+      points: [{
+        id: 'current',
+        vector: [0],
+        payload: { modelId, dimensions, updatedAt: Date.now() },
+      }],
     });
   }
 
   /**
-   * Retrieve stored model metadata from the database
-   * Returns null if no metadata exists (new database)
+   * Retrieve stored model metadata
    */
   async getStoredModelMetadata(): Promise<{ modelId: string; dimensions: number } | null> {
-    const db = connections.get(this.uri);
-    if (!db) return null;
-
     try {
-      const tableNames = await db.tableNames();
-      if (!tableNames.includes(MODEL_METADATA_TABLE)) {
-        return null;
-      }
+      const collections = await this.client.getCollections();
+      const metaExists = collections.collections.some(c => c.name === QDRANT_METADATA_COLLECTION);
+      if (!metaExists) return null;
 
-      const metaTable = await db.openTable(MODEL_METADATA_TABLE);
-      const results = await metaTable.query().where(`key = 'current'`).limit(1).toArray();
+      const result = await this.client.retrieve(QDRANT_METADATA_COLLECTION, {
+        ids: ['current'],
+        with_payload: true,
+      });
 
-      if (results.length === 0) {
-        return null;
-      }
+      if (result.length === 0 || !result[0].payload) return null;
 
       return {
-        modelId: results[0].modelId as string,
-        dimensions: results[0].dimensions as number,
+        modelId: result[0].payload.modelId as string,
+        dimensions: result[0].payload.dimensions as number,
       };
     } catch {
       return null;
@@ -643,7 +422,6 @@ export class MemoryDatabase {
 
   /**
    * Validate that current model dimensions match stored metadata
-   * Throws error if there's a mismatch
    */
   async validateModelDimensions(currentDimensions: number): Promise<void> {
     const stored = await this.getStoredModelMetadata();
@@ -652,40 +430,44 @@ export class MemoryDatabase {
         `Model dimension mismatch detected!`,
         `  Stored dimensions: ${stored.dimensions}`,
         `  Current model dimensions: ${currentDimensions}`,
-        `  This means the database was created with a different embedding model.`,
         ``,
-        `To fix this, delete the database directory and restart:`,
-        `  rm -rf ./memory_data`,
+        `To fix this, delete the Qdrant collection and restart:`,
+        `  curl -X DELETE http://localhost:6333/collections/${MEMORY_TABLE_NAME}`,
         ``,
-        `Or specify a different database path via MEMORY_DB_PATH environment variable.`,
+        `Or specify a different collection via environment variable.`,
       ].join('\n');
       throw new Error(errorMsg);
     }
   }
+
+  /**
+   * Close the database connection
+   * QdrantClient is stateless HTTP, so no explicit close needed
+   */
+  async close(): Promise<void> {
+    this.initialized = false;
+  }
 }
 
-/**
- * Database instances cache (per-URI)
- */
+// --- Singletons ---
+
 const databaseInstances: Map<string, MemoryDatabase> = new Map();
 
 /**
- * Get a database instance for the given URI
- * Creates a new instance if one doesn't exist for this URI
+ * Get a database instance for the given URL
  */
-export function getDatabase(uri?: string): MemoryDatabase {
-  const dbPath = uri || './memory_data';
-
-  if (!databaseInstances.has(dbPath)) {
-    databaseInstances.set(dbPath, new MemoryDatabase(dbPath));
+export function getDatabase(url?: string): MemoryDatabase {
+  const key = url || DEFAULT_QDRANT_URL;
+  if (!databaseInstances.has(key)) {
+    databaseInstances.set(key, new MemoryDatabase(key));
   }
-  return databaseInstances.get(dbPath)!;
+  return databaseInstances.get(key)!;
 }
 
 /**
  * Initialize the default database
  */
-export async function initializeDatabase(uri?: string): Promise<void> {
-  const db = getDatabase(uri);
+export async function initializeDatabase(url?: string): Promise<void> {
+  const db = getDatabase(url);
   await db.initialize();
 }

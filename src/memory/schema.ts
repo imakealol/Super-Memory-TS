@@ -71,19 +71,42 @@ export interface SearchFilter {
 }
 
 /**
- * LanceDB table name
+ * Qdrant collection name for memory points
  */
 export const MEMORY_TABLE_NAME = 'memories';
 
 /**
- * HNSW index configuration for fast vector search
+ * Qdrant collection name for model metadata (single-point config store)
  */
-export const HNSW_CONFIG = {
-  type: 'hnsw',
-  m: 16,                    // Max connections per layer
-  efConstruction: 128,      // Build-time search depth
-  efSearch: 64,            // Query-time search depth
-  distanceType: 'cosine',  // Cosine similarity
+export const QDRANT_METADATA_COLLECTION = 'model_metadata';
+
+/**
+ * Default Qdrant server URL
+ * Override with QDRANT_URL environment variable
+ */
+export const DEFAULT_QDRANT_URL = process.env.QDRANT_URL || 'http://localhost:6333';
+
+/**
+ * HNSW configuration for Qdrant collection creation
+ * Maps to Qdrant's HnswConfigDiff
+ */
+export const QDRANT_HNSW_CONFIG = {
+  m: 16,
+  efConstruct: 128,
+  fullScanThreshold: 10000,
+} as const;
+
+/**
+ * Payload field names used for indexing and filtering
+ */
+export const PAYLOAD_FIELDS = {
+  text: 'text',
+  sourceType: 'sourceType',
+  sourcePath: 'sourcePath',
+  timestamp: 'timestamp',
+  contentHash: 'contentHash',
+  metadataJson: 'metadataJson',
+  sessionId: 'sessionId',
 } as const;
 
 /**

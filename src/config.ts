@@ -59,6 +59,12 @@ export interface PerformanceConfig {
 
 // ==================== Constants ====================
 
+/**
+ * Qdrant connection URL
+ * @default 'http://localhost:6333'
+ */
+export const QDRANT_URL = process.env.QDRANT_URL || 'http://localhost:6333';
+
 const DEFAULT_PERFORMANCE_CONFIG: PerformanceConfig = {
   workers: os.cpus().length,
   maxHeapMB: 8192,
@@ -78,7 +84,7 @@ const DEFAULT_CONFIG: Config = {
     batchSize: 32,
   },
   database: {
-    dbPath: './.super-memory/db',
+    dbPath: QDRANT_URL,
     tableName: 'memories',
   },
   indexer: {

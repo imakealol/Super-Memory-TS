@@ -68,7 +68,7 @@ export class SnapshotIndex {
       cwd: this.rootPath,
       absolute: true,
       nodir: true,
-      ignore: ['node_modules/**', '.git/**', 'dist/**', '*.log', '.DS_Store', '**/*.db', '**/*.har', '**/*.tmp', '**/lancedb/**']
+      ignore: ['node_modules/**', '.git/**', 'dist/**', '*.log', '.DS_Store', '**/*.db', '**/*.har', '**/*.tmp']
     });
     
     const currentPaths = new Set<string>();
