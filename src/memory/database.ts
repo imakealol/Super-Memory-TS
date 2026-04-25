@@ -164,8 +164,8 @@ export class MemoryDatabase {
         vectors: {
           size: embeddingDim,
           distance: 'Cosine',
-          hnsw_config: QDRANT_HNSW_CONFIG,
         },
+        hnsw_config: QDRANT_HNSW_CONFIG,
       });
 
       // Create payload indexes for fields used in filtering

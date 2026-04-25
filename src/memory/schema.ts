@@ -92,8 +92,8 @@ export const DEFAULT_QDRANT_URL = process.env.QDRANT_URL || 'http://localhost:63
  */
 export const QDRANT_HNSW_CONFIG = {
   m: 16,
-  efConstruct: 128,
-  fullScanThreshold: 10000,
+  ef_construct: 128,
+  full_scan_threshold: 10000,
 } as const;
 
 /**
