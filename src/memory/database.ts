@@ -23,6 +23,7 @@ import {
 import { ModelManager } from '../model/index.js';
 import { generateEmbeddings } from '../model/embeddings.js';
 import { logger } from '../utils/logger.js';
+import { getConfig } from '../config.js';
 
 // Re-export for external consumers
 export type { MemoryEntryInput } from './schema.js';
@@ -32,39 +33,6 @@ export type { MemoryEntryInput } from './schema.js';
  */
 function computeHash(text: string): string {
   return createHash('sha256').update(text, 'utf-8').digest('hex');
-}
-
-/**
- * Build Qdrant filter from SearchFilter
- */
-function buildPayloadFilter(filter?: SearchFilter): Record<string, unknown> | undefined {
-  if (!filter) return undefined;
-
-  const conditions: Record<string, unknown>[] = [];
-
-  if (filter.sourceType) {
-    conditions.push({
-      key: PAYLOAD_FIELDS.sourceType,
-      match: { value: filter.sourceType },
-    });
-  }
-
-  if (filter.sessionId) {
-    conditions.push({
-      key: PAYLOAD_FIELDS.sessionId,
-      match: { value: filter.sessionId },
-    });
-  }
-
-  if (filter.since) {
-    conditions.push({
-      key: PAYLOAD_FIELDS.timestamp,
-      range: { gte: filter.since.getTime() },
-    });
-  }
-
-  if (conditions.length === 0) return undefined;
-  return { must: conditions };
 }
 
 // --- Client Cache ---
@@ -108,22 +76,25 @@ function toPoint(
   vector: number[],
   entry: MemoryEntryInput,
   timestamp: number,
-  contentHash: string
+  contentHash: string,
+  projectId?: string
 ): Schemas['PointStruct'] {
-  return {
-    id,
-    vector,
-    payload: {
-      [PAYLOAD_FIELDS.text]: entry.text,
-      [PAYLOAD_FIELDS.content]: entry.text,
-      [PAYLOAD_FIELDS.sourceType]: entry.sourceType,
-      [PAYLOAD_FIELDS.sourcePath]: entry.sourcePath ?? '',
-      [PAYLOAD_FIELDS.timestamp]: timestamp,
-      [PAYLOAD_FIELDS.contentHash]: contentHash,
-      [PAYLOAD_FIELDS.metadataJson]: entry.metadataJson ?? '',
-      [PAYLOAD_FIELDS.sessionId]: entry.sessionId ?? '',
-    },
+  const payload: Record<string, unknown> = {
+    [PAYLOAD_FIELDS.text]: entry.text,
+    [PAYLOAD_FIELDS.content]: entry.text,
+    [PAYLOAD_FIELDS.sourceType]: entry.sourceType,
+    [PAYLOAD_FIELDS.sourcePath]: entry.sourcePath ?? '',
+    [PAYLOAD_FIELDS.timestamp]: timestamp,
+    [PAYLOAD_FIELDS.contentHash]: contentHash,
+    [PAYLOAD_FIELDS.metadataJson]: entry.metadataJson ?? '',
+    [PAYLOAD_FIELDS.sessionId]: entry.sessionId ?? '',
   };
+
+  if (projectId) {
+    payload[PAYLOAD_FIELDS.projectId] = projectId;
+  }
+
+  return { id, vector, payload };
 }
 
 /**
@@ -174,6 +145,7 @@ function pointToMemoryEntry(point: Schemas['ScoredPoint'] | Schemas['Record']): 
     contentHash: (payload[PAYLOAD_FIELDS.contentHash] as string) ?? '',
     metadataJson: (payload[PAYLOAD_FIELDS.metadataJson] as string) || undefined,
     sessionId: (payload[PAYLOAD_FIELDS.sessionId] as string) || undefined,
+    projectId: (payload[PAYLOAD_FIELDS.projectId] as string) || undefined,
   };
 }
 
@@ -183,10 +155,26 @@ export class MemoryDatabase {
   private initialized: boolean = false;
   private client: QdrantClient;
   private qdrantUrl: string;
+  private projectId?: string;
 
-  constructor(url: string = DEFAULT_QDRANT_URL) {
+  constructor(url: string = DEFAULT_QDRANT_URL, projectId?: string) {
     this.qdrantUrl = url;
     this.client = getClient(url);
+    this.projectId = projectId;
+  }
+
+  /**
+   * Build the project isolation filter with backward compatibility.
+   * Matches entries with the current projectId OR entries with no projectId (legacy data).
+   */
+  private getProjectFilter(): Record<string, unknown> | undefined {
+    if (!this.projectId) return undefined;
+    return {
+      should: [
+        { key: PAYLOAD_FIELDS.projectId, match: { value: this.projectId } },
+        { is_empty: { key: PAYLOAD_FIELDS.projectId } },
+      ],
+    };
   }
 
   /**
@@ -229,6 +217,8 @@ export class MemoryDatabase {
     } else {
       // Validate dimensions match
       await this.validateModelDimensions(embeddingDim);
+      // Ensure project_id index exists for existing collections
+      await this.ensureProjectIdIndex();
     }
 
     this.initialized = true;
@@ -244,6 +234,7 @@ export class MemoryDatabase {
       { field: PAYLOAD_FIELDS.sessionId, type: 'keyword' as const },
       { field: PAYLOAD_FIELDS.contentHash, type: 'keyword' as const },
       { field: PAYLOAD_FIELDS.timestamp, type: 'integer' as const },
+      { field: PAYLOAD_FIELDS.projectId, type: 'keyword' as const },
     ];
 
     for (const { field, type } of indexFields) {
@@ -255,6 +246,24 @@ export class MemoryDatabase {
       } catch (err) {
         // Index may already exist — non-fatal
         logger.warn(`Payload index warning for ${field}:`, err);
+      }
+    }
+  }
+
+  /**
+   * Ensure project_id payload index exists (for existing collections)
+   */
+  private async ensureProjectIdIndex(): Promise<void> {
+    try {
+      await this.client.createPayloadIndex(MEMORY_TABLE_NAME, {
+        field_name: PAYLOAD_FIELDS.projectId,
+        field_schema: 'keyword',
+      });
+    } catch (err) {
+      // Index may already exist — non-fatal
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (!errMsg.includes('already exists')) {
+        logger.warn('Project ID payload index warning:', err);
       }
     }
   }
@@ -272,7 +281,7 @@ export class MemoryDatabase {
     const points = entries.map((entry, idx) => {
       const contentHash = computeHash(entry.text);
       const id = randomUUID();
-      return toPoint(id, embeddingResults[idx].embedding, entry, timestamp, contentHash);
+      return toPoint(id, embeddingResults[idx].embedding, entry, timestamp, contentHash, this.projectId);
     });
 
     await withRetry(() => this.client.upsert(MEMORY_TABLE_NAME, { points }));
@@ -295,7 +304,7 @@ export class MemoryDatabase {
       ? Array.isArray(input.vector) ? input.vector : Array.from(input.vector)
       : (await generateEmbeddings([input.text]))[0].embedding;
 
-    const point = toPoint(id, vector, input, timestamp, contentHash);
+    const point = toPoint(id, vector, input, timestamp, contentHash, this.projectId);
     await withRetry(() => this.client.upsert(MEMORY_TABLE_NAME, { points: [point] }));
 
     return id;
@@ -328,18 +337,23 @@ export class MemoryDatabase {
    * Delete all memories from a specific source path
    */
   async deleteBySourcePath(sourcePath: string, sourceType?: string): Promise<number> {
-    const filter: Record<string, unknown> = {
-      must: [
-        { key: PAYLOAD_FIELDS.sourcePath, match: { value: sourcePath } },
-      ],
-    };
+    const must: Record<string, unknown>[] = [
+      { key: PAYLOAD_FIELDS.sourcePath, match: { value: sourcePath } },
+    ];
 
     if (sourceType) {
-      (filter.must as Array<unknown>).push({
+      must.push({
         key: PAYLOAD_FIELDS.sourceType,
         match: { value: sourceType },
       });
     }
+
+    const projectFilter = this.getProjectFilter();
+    if (projectFilter) {
+      must.push(projectFilter);
+    }
+
+    const filter = must.length === 1 ? must[0] : { must };
 
     // Count before delete
     const countResult = await withRetry(() => this.client.count(MEMORY_TABLE_NAME, {
@@ -362,7 +376,28 @@ export class MemoryDatabase {
     const opts = { ...DEFAULT_SEARCH_OPTIONS, ...options };
     const topK = Math.min(opts.topK ?? 5, 20);
     const queryVector = Array.isArray(vector) ? vector : Array.from(vector);
-    const filter = buildPayloadFilter(opts.filter);
+
+    // Build filter: project isolation + user filters
+    const conditions: Record<string, unknown>[] = [];
+    const projectFilter = this.getProjectFilter();
+    if (projectFilter) conditions.push(projectFilter);
+
+    if (opts.filter) {
+      if (opts.filter.sourceType) {
+        conditions.push({ key: PAYLOAD_FIELDS.sourceType, match: { value: opts.filter.sourceType } });
+      }
+      if (opts.filter.sessionId) {
+        conditions.push({ key: PAYLOAD_FIELDS.sessionId, match: { value: opts.filter.sessionId } });
+      }
+      if (opts.filter.since) {
+        conditions.push({ key: PAYLOAD_FIELDS.timestamp, range: { gte: opts.filter.since.getTime() } });
+      }
+      if (opts.filter.projectId) {
+        conditions.push({ key: PAYLOAD_FIELDS.projectId, match: { value: opts.filter.projectId } });
+      }
+    }
+
+    const filter = conditions.length === 0 ? undefined : conditions.length === 1 ? conditions[0] : { must: conditions };
 
     const results = await withRetry(() => this.client.search(MEMORY_TABLE_NAME, {
       vector: queryVector,
@@ -395,7 +430,27 @@ export class MemoryDatabase {
    * List all memories with optional filter
    */
   async listMemories(filter?: SearchFilter): Promise<MemoryEntry[]> {
-    const qdrantFilter = buildPayloadFilter(filter);
+    // Build filter: project isolation + user filters
+    const conditions: Record<string, unknown>[] = [];
+    const projectFilter = this.getProjectFilter();
+    if (projectFilter) conditions.push(projectFilter);
+
+    if (filter) {
+      if (filter.sourceType) {
+        conditions.push({ key: PAYLOAD_FIELDS.sourceType, match: { value: filter.sourceType } });
+      }
+      if (filter.sessionId) {
+        conditions.push({ key: PAYLOAD_FIELDS.sessionId, match: { value: filter.sessionId } });
+      }
+      if (filter.since) {
+        conditions.push({ key: PAYLOAD_FIELDS.timestamp, range: { gte: filter.since.getTime() } });
+      }
+      if (filter.projectId) {
+        conditions.push({ key: PAYLOAD_FIELDS.projectId, match: { value: filter.projectId } });
+      }
+    }
+
+    const qdrantFilter = conditions.length === 0 ? undefined : conditions.length === 1 ? conditions[0] : { must: conditions };
 
     const results = await withRetry(() => this.client.scroll(MEMORY_TABLE_NAME, {
       filter: qdrantFilter,
@@ -411,7 +466,9 @@ export class MemoryDatabase {
    * Get count of memories
    */
   async countMemories(): Promise<number> {
-    const result = await withRetry(() => this.client.count(MEMORY_TABLE_NAME, { exact: true }));
+    const projectFilter = this.getProjectFilter();
+    const filter = projectFilter || undefined;
+    const result = await withRetry(() => this.client.count(MEMORY_TABLE_NAME, { filter, exact: true }));
     return result.count;
   }
 
@@ -419,10 +476,19 @@ export class MemoryDatabase {
    * Check if content already exists (by hash)
    */
   async contentExists(hash: string): Promise<boolean> {
+    const must: Record<string, unknown>[] = [
+      { key: PAYLOAD_FIELDS.contentHash, match: { value: hash } },
+    ];
+
+    const projectFilter = this.getProjectFilter();
+    if (projectFilter) {
+      must.push(projectFilter);
+    }
+
+    const filter = must.length === 1 ? must[0] : { must };
+
     const result = await withRetry(() => this.client.count(MEMORY_TABLE_NAME, {
-      filter: {
-        must: [{ key: PAYLOAD_FIELDS.contentHash, match: { value: hash } }],
-      },
+      filter,
       exact: true,
     }));
     return result.count > 0;
@@ -510,12 +576,13 @@ export class MemoryDatabase {
 const databaseInstances: Map<string, MemoryDatabase> = new Map();
 
 /**
- * Get a database instance for the given URL
+ * Get a database instance for the given URL and projectId
  */
-export function getDatabase(url?: string): MemoryDatabase {
+export function getDatabase(url?: string, projectId?: string): MemoryDatabase {
   const key = url || DEFAULT_QDRANT_URL;
   if (!databaseInstances.has(key)) {
-    databaseInstances.set(key, new MemoryDatabase(key));
+    const effectiveProjectId = projectId ?? getConfig().database.projectId;
+    databaseInstances.set(key, new MemoryDatabase(key, effectiveProjectId));
   }
   return databaseInstances.get(key)!;
 }

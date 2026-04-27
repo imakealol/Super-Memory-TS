@@ -36,6 +36,8 @@ export interface DatabaseConfig {
   dbPath?: string;
   qdrantUrl?: string;
   tableName: string;
+  /** Project ID for multi-tenant isolation */
+  projectId?: string;
 }
 
 export interface IndexerConfig {
@@ -202,6 +204,7 @@ export const ENV_VARS = {
   BOOMERANG_PAUSE_INDEXING: 'BOOMERANG_PAUSE_INDEXING',
   BOOMERANG_PERIODIC_SCAN_INTERVAL_MS: 'BOOMERANG_PERIODIC_SCAN_INTERVAL_MS',
   BOOMERANG_YIELD_MS: 'BOOMERANG_YIELD_MS',
+  BOOMERANG_PROJECT_ID: 'BOOMERANG_PROJECT_ID',
 } as const;
 
 // ==================== Validation ====================
@@ -259,6 +262,42 @@ export function validateConfig(config: Config): ValidationResult {
   };
 }
 
+// ==================== Project ID Utilities ====================
+
+/**
+ * Sanitize a project ID: lowercase, alphanumeric + hyphens/underscores only
+ */
+export function sanitizeProjectId(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-+/g, '-')
+    .slice(0, 255) || 'default';
+}
+
+/**
+ * Generate a project ID from environment or current directory
+ */
+export function generateProjectId(projectPath?: string): string | undefined {
+  const envId = process.env[ENV_VARS.BOOMERANG_PROJECT_ID];
+  if (envId === '') return undefined;  // Explicitly disabled
+  if (envId) return sanitizeProjectId(envId);
+
+  const projectEnvPath = process.env.BOOMERANG_PROJECT_PATH || projectPath;
+  if (projectEnvPath) {
+    const name = projectEnvPath.split(/[/\\]/).pop() || 'default';
+    return sanitizeProjectId(name);
+  }
+
+  try {
+    const name = process.cwd().split(/[/\\]/).pop() || 'default';
+    return sanitizeProjectId(name);
+  } catch {
+    return undefined;
+  }
+}
+
 // ==================== Config Loading ====================
 
 function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
@@ -278,6 +317,7 @@ function parseEnvConfig(): Partial<Config> {
     database: {
       qdrantUrl: process.env[ENV_VARS.QDRANT_URL] || process.env[ENV_VARS.BOOMERANG_DB_PATH] || DEFAULT_CONFIG.database.qdrantUrl,
       tableName: DEFAULT_CONFIG.database.tableName,
+      projectId: generateProjectId(),
     },
     indexer: {
       chunkSize: parseInt(process.env[ENV_VARS.BOOMERANG_CHUNK_SIZE] || '', 10) || DEFAULT_CONFIG.indexer.chunkSize,
@@ -320,6 +360,7 @@ async function loadJsonConfig(configPath: string): Promise<Partial<Config>> {
       database: json.database ? {
         qdrantUrl: json.database.qdrantUrl || json.database.dbPath || DEFAULT_CONFIG.database.qdrantUrl,
         tableName: json.database.tableName || DEFAULT_CONFIG.database.tableName,
+        projectId: json.database.projectId || DEFAULT_CONFIG.database.projectId,
       } : undefined,
       indexer: json.indexer ? {
         chunkSize: json.indexer.chunkSize || DEFAULT_CONFIG.indexer.chunkSize,

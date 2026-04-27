@@ -50,8 +50,8 @@ export class MemorySystem {
   private initializing: boolean = false;
   private initPromise: Promise<void> | null = null;
 
-  constructor(db?: MemoryDatabase, search?: MemorySearch, config?: { dbUri?: string }) {
-    this.db = db ?? new MemoryDatabase(config?.dbUri);
+  constructor(db?: MemoryDatabase, search?: MemorySearch, config?: { dbUri?: string; projectId?: string }) {
+    this.db = db ?? new MemoryDatabase(config?.dbUri, config?.projectId);
     this.search = search ?? new MemorySearch(this.db);
   }
 
@@ -203,7 +203,7 @@ let defaultMemorySystem: MemorySystem | null = null;
 /**
  * Get the default memory system instance
  */
-export function getMemorySystem(config?: { dbUri?: string }): MemorySystem {
+export function getMemorySystem(config?: { dbUri?: string; projectId?: string }): MemorySystem {
   if (!defaultMemorySystem) {
     defaultMemorySystem = new MemorySystem(undefined, undefined, config);
   }

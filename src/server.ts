@@ -49,8 +49,14 @@ export class SuperMemoryServer {
     this.config = config || loadConfigSync();
     this.validateConfig();
 
+    // Resolve projectId from config
+    const projectId = this.config.database.projectId;
+
     this.context = {
-      memory: getMemorySystem({ dbUri: this.config.database.qdrantUrl || this.config.database.dbPath }),
+      memory: getMemorySystem({ 
+        dbUri: this.config.database.qdrantUrl || this.config.database.dbPath,
+        projectId,
+      }),
       indexer: null,
     };
 
@@ -386,6 +392,9 @@ export class SuperMemoryServer {
       // Initialize project indexer (non-critical)
       try {
         if (this.config.indexer && this.config.indexer.chunkSize) {
+          // Resolve projectId from config (same as used for MemorySystem)
+          const projectId = this.config.database.projectId;
+
           this.context.indexer = new ProjectIndexer({
             rootPath: process.env.BOOMERANG_ROOT_PATH || process.cwd(),
             includePatterns: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.py', '**/*.md'],
@@ -393,7 +402,7 @@ export class SuperMemoryServer {
             chunkSize: this.config.indexer.chunkSize || 512,
             chunkOverlap: this.config.indexer.chunkOverlap || 50,
             maxFileSize: this.config.indexer.maxFileSize || 10 * 1024 * 1024,
-          });
+          }, undefined, this.config.database.qdrantUrl, projectId);
 
           logger.info('Project indexer initialized');
         }

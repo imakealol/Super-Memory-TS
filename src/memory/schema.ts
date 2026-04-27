@@ -33,6 +33,8 @@ export interface MemoryEntry {
   sessionId?: string;
   /** Qdrant similarity score (populated during search) */
   score?: number;
+  /** Project ID for multi-tenant isolation */
+  projectId?: string;
 }
 
 /**
@@ -70,6 +72,8 @@ export interface SearchFilter {
   sessionId?: string;
   /** Filter by minimum timestamp */
   since?: Date;
+  /** Filter by project ID (for explicit cross-project queries) */
+  projectId?: string;
 }
 
 /**
@@ -110,6 +114,7 @@ export const PAYLOAD_FIELDS = {
   contentHash: 'contentHash',
   metadataJson: 'metadataJson',
   sessionId: 'sessionId',
+  projectId: 'projectId',
 } as const;
 
 /**

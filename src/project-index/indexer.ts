@@ -85,7 +85,7 @@ export class ProjectIndexer extends EventEmitter {
   private lastMemoryWarning = 0;
   private readonly MEMORY_WARNING_COOLDOWN_MS = 5000; // Only warn every 5 seconds
 
-  constructor(config: ProjectIndexConfig, db?: MemoryDatabase, dbUri?: string, _snapshotPath?: string) {
+  constructor(config: ProjectIndexConfig, db?: MemoryDatabase, dbUri?: string, _projectId?: string) {
     super();
     
     // Build internal config with all required fields
@@ -117,9 +117,15 @@ export class ProjectIndexer extends EventEmitter {
       yieldMs: config.yieldMs ?? 10,
     };
     
-    // Use provided database, or shared singleton from getDatabase()
-    // This ensures indexer shares the same database instance as MemorySystem
-    this.db = db || getDatabase();
+    // Use provided database, or create with projectId if dbUri provided
+    if (db) {
+      this.db = db;
+    } else if (dbUri) {
+      this.db = getDatabase(dbUri, _projectId);
+    } else {
+      this.db = getDatabase(undefined, _projectId);
+    }
+    
     this.chunker = createChunker({
       maxChunkSize: this.config.chunkSize,
       overlap: this.config.chunkOverlap,
