@@ -57,6 +57,16 @@ function shouldSkipFile(filePath: string): boolean {
 }
 
 /**
+ * Progress callbacks for indexing operations
+ */
+export interface IndexerProgressCallbacks {
+  onFileIndexed?: (filePath: string, chunkCount: number) => void;
+  onError?: (filePath: string, error: Error) => void;
+  onComplete?: (stats: ProjectIndexerStats) => void;
+  onProgress?: (progress: { totalFiles: number; indexedFiles: number; failedFiles: number }) => void;
+}
+
+/**
  * ProjectIndexer - indexes project files for semantic search
  */
 export class ProjectIndexer extends EventEmitter {
@@ -84,6 +94,10 @@ export class ProjectIndexer extends EventEmitter {
   // Memory warning cooldown to reduce log spam
   private lastMemoryWarning = 0;
   private readonly MEMORY_WARNING_COOLDOWN_MS = 5000; // Only warn every 5 seconds
+
+  // Progress tracking
+  private progressCallbacks: IndexerProgressCallbacks = {};
+  private failedFileCount: number = 0;
 
   constructor(config: ProjectIndexConfig, db?: MemoryDatabase, dbUri?: string, _projectId?: string) {
     super();
@@ -138,6 +152,13 @@ export class ProjectIndexer extends EventEmitter {
   }
 
   /**
+   * Set progress callbacks for indexing operations
+   */
+  setProgressCallbacks(callbacks: IndexerProgressCallbacks): void {
+    this.progressCallbacks = callbacks;
+  }
+
+  /**
    * Start the indexer - begin watching and initial indexing
    */
   async start(snapshotPath?: string): Promise<void> {
@@ -148,6 +169,7 @@ export class ProjectIndexer extends EventEmitter {
 
     logger.info('Starting project indexer');
     this.isRunning = true;
+    this.failedFileCount = 0; // Reset failed file counter on start
 
     // Ensure database is initialized (use shared singleton)
     if (!this.db) {
@@ -514,11 +536,26 @@ if (this.pendingChunks.length >= this.config.flushThreshold) {
       this.fileTracker.setFile(filePath, hash, chunks.length);
 
       logger.info(`Queued for indexing: ${filePath} (${chunks.length} chunks)`);
+
+      // Call progress callback for successful indexing
+      if (this.progressCallbacks.onFileIndexed) {
+        this.progressCallbacks.onFileIndexed(filePath, chunks.length);
+      }
+
+      // Emit progress event for background job tracking
+      this.emit('file-indexed', { filePath, chunkCount: chunks.length });
     } catch (error) {
+      this.failedFileCount++;
       const errorDetails = error instanceof Error
         ? { message: error.message, stack: error.stack, name: error.name }
         : { raw: String(error), type: typeof error };
       logger.error(`Failed to process file: ${filePath}`, errorDetails);
+
+      // Call error callback
+      if (this.progressCallbacks.onError && error instanceof Error) {
+        this.progressCallbacks.onError(filePath, error);
+      }
+
       this.emit('error', error);
     }
   }
@@ -721,7 +758,7 @@ if (this.pendingChunks.length >= this.config.flushThreshold) {
         (sum, f) => sum + f.chunkCount, 0
       ),
       indexedFiles: allFiles.size,
-      failedFiles: 0, // Would need to track this
+      failedFiles: this.failedFileCount,
       lastIndexing: new Date(),
     };
   }

@@ -719,6 +719,188 @@ describe('ProjectIndexer', () => {
   });
 });
 
+describe('Background Indexing', () => {
+  let testDir: string;
+  let db: MemoryDatabase;
+  let indexer: ProjectIndexer;
+
+  beforeAll(async () => {
+    db = getDatabase(TEST_DB_DIR + '-background');
+    await db.initialize();
+  });
+
+  afterAll(async () => {
+    if (indexer) {
+      await indexer.stop();
+    }
+    if (db) {
+      await db.close();
+    }
+    try {
+      await rm(TEST_DB_DIR + '-background', { recursive: true, force: true });
+    } catch (e) {
+      // Ignore
+    }
+  });
+
+  beforeEach(async () => {
+    testDir = join(TEST_PROJECT_DIR, 'background-test-' + Date.now());
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    if (indexer) {
+      await indexer.stop();
+    }
+    try {
+      await rm(testDir, { recursive: true, force: true });
+    } catch (e) {
+      // Ignore
+    }
+  });
+
+  test('should set progress callbacks and invoke onFileIndexed', async () => {
+    const testFile = join(testDir, 'test.ts');
+    await writeFile(testFile, 'export const x = 1;');
+
+    const indexedFiles: string[] = [];
+    const errors: [string, Error][] = [];
+
+    indexer = createIndexer({
+      rootPath: testDir,
+      includePatterns: ['**/*.ts'],
+      excludePatterns: [],
+      maxFileSize: 1024 * 1024,
+      chunkSize: 512,
+      chunkOverlap: 50,
+    }, db);
+
+    indexer.setProgressCallbacks({
+      onFileIndexed: (filePath: string) => {
+        indexedFiles.push(filePath);
+      },
+      onError: (filePath: string, error: Error) => {
+        errors.push([filePath, error]);
+      },
+    });
+
+    await indexer.start();
+    await waitForIndexerIdle(indexer);
+
+    // Poll for file to be indexed
+    await retryUntil(
+      () => indexedFiles.length > 0 ? indexedFiles : undefined,
+      { retries: 60, delayMs: 500 }
+    );
+
+    expect(indexedFiles.length).toBeGreaterThan(0);
+    expect(errors.length).toBe(0);
+
+    await indexer.stop();
+  }, 90000);
+
+  test('should track progress incrementally via getStats', async () => {
+    // Create multiple files
+    for (let i = 0; i < 5; i++) {
+      await writeFile(join(testDir, `test${i}.ts`), `export const x${i} = ${i};`);
+    }
+
+    indexer = createIndexer({
+      rootPath: testDir,
+      includePatterns: ['**/*.ts'],
+      excludePatterns: [],
+      maxFileSize: 1024 * 1024,
+      chunkSize: 512,
+      chunkOverlap: 50,
+    }, db);
+
+    await indexer.start();
+
+    // Wait for at least some files to be indexed
+    await retryUntil(
+      () => {
+        const stats = indexer.getStats();
+        return stats.indexedFiles > 0 ? stats : undefined;
+      },
+      { retries: 60, delayMs: 500 }
+    );
+
+    const stats = indexer.getStats();
+    expect(stats.indexedFiles).toBeGreaterThan(0);
+    expect(stats.totalChunks).toBeGreaterThan(0);
+    expect(stats.failedFiles).toBe(0);
+
+    await indexer.stop();
+  }, 90000);
+
+  test('should track failed files count on error', async () => {
+    // Create a malformed file that might cause issues
+    const testFile = join(testDir, 'test.ts');
+    await writeFile(testFile, 'export const x = 1;');
+
+    indexer = createIndexer({
+      rootPath: testDir,
+      includePatterns: ['**/*.ts'],
+      excludePatterns: [],
+      maxFileSize: 1024 * 1024,
+      chunkSize: 512,
+      chunkOverlap: 50,
+    }, db);
+
+    await indexer.start();
+    await waitForIndexerIdle(indexer);
+
+    // Poll for stats
+    await retryUntil(
+      () => {
+        const stats = indexer.getStats();
+        return stats.indexedFiles > 0 ? stats : undefined;
+      },
+      { retries: 60, delayMs: 500 }
+    );
+
+    // Failed files should be 0 for valid file
+    const stats = indexer.getStats();
+    expect(stats.failedFiles).toBe(0);
+
+    await indexer.stop();
+  }, 90000);
+
+  test('should emit file-indexed events during indexing', async () => {
+    const testFile = join(testDir, 'test.ts');
+    await writeFile(testFile, 'export const x = 1;');
+
+    const indexedEvents: { filePath: string; chunkCount: number }[] = [];
+
+    indexer = createIndexer({
+      rootPath: testDir,
+      includePatterns: ['**/*.ts'],
+      excludePatterns: [],
+      maxFileSize: 1024 * 1024,
+      chunkSize: 512,
+      chunkOverlap: 50,
+    }, db);
+
+    indexer.on('file-indexed', (data: { filePath: string; chunkCount: number }) => {
+      indexedEvents.push(data);
+    });
+
+    await indexer.start();
+    await waitForIndexerIdle(indexer);
+
+    // Poll for events
+    await retryUntil(
+      () => indexedEvents.length > 0 ? indexedEvents : undefined,
+      { retries: 60, delayMs: 500 }
+    );
+
+    expect(indexedEvents.length).toBeGreaterThan(0);
+    expect(indexedEvents[0].filePath).toContain('test.ts');
+
+    await indexer.stop();
+  }, 90000);
+});
+
 describe('Integration: Full Indexing Pipeline', () => {
   let testDir: string;
   let db: MemoryDatabase;

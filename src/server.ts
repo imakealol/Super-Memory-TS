@@ -11,12 +11,130 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { randomUUID } from 'crypto';
 import { loadConfigSync, validateConfig, type Config } from './config.js';
 import { ModelManager } from './model/index.js';
 import { MemorySystem, getMemorySystem } from './memory/index.js';
 import { ProjectIndexer } from './project-index/indexer.js';
 import { logger } from './utils/logger.js';
 import type { SearchOptions, SearchStrategy, MemorySourceType } from './memory/schema.js';
+
+// ==================== Job Tracking ====================
+
+interface JobProgress {
+  totalFiles: number;
+  indexedFiles: number;
+  failedFiles: number;
+  totalChunks: number;
+}
+
+interface JobState {
+  status: 'running' | 'completed' | 'failed';
+  progress: JobProgress;
+  error?: string;
+  startedAt: Date;
+  completedAt?: Date;
+}
+
+/**
+ * In-memory job tracking for background indexing tasks.
+ * Jobs are automatically cleaned up after 1 hour of completion.
+ */
+class JobTracker {
+  private jobs: Map<string, JobState> = new Map();
+  private cleanupTimer: NodeJS.Timeout | null = null;
+  private readonly JOB_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+  constructor() {
+    this.startCleanupTimer();
+  }
+
+  /**
+   * Create a new job and return its ID
+   */
+  createJob(): string {
+    const jobId = randomUUID();
+    this.jobs.set(jobId, {
+      status: 'running',
+      progress: {
+        totalFiles: 0,
+        indexedFiles: 0,
+        failedFiles: 0,
+        totalChunks: 0,
+      },
+      startedAt: new Date(),
+    });
+    return jobId;
+  }
+
+  /**
+   * Update job progress
+   */
+  updateProgress(jobId: string, progress: Partial<JobProgress>): void {
+    const job = this.jobs.get(jobId);
+    if (job && job.status === 'running') {
+      Object.assign(job.progress, progress);
+    }
+  }
+
+  /**
+   * Mark job as completed
+   */
+  completeJob(jobId: string, finalProgress: JobProgress): void {
+    const job = this.jobs.get(jobId);
+    if (job) {
+      job.status = 'completed';
+      job.progress = finalProgress;
+      job.completedAt = new Date();
+    }
+  }
+
+  /**
+   * Mark job as failed
+   */
+  failJob(jobId: string, error: string): void {
+    const job = this.jobs.get(jobId);
+    if (job) {
+      job.status = 'failed';
+      job.error = error;
+      job.completedAt = new Date();
+    }
+  }
+
+  /**
+   * Get job status
+   */
+  getJob(jobId: string): JobState | undefined {
+    return this.jobs.get(jobId);
+  }
+
+  /**
+   * Start periodic cleanup of old jobs
+   */
+  private startCleanupTimer(): void {
+    this.cleanupTimer = setInterval(() => {
+      const now = Date.now();
+      for (const [jobId, job] of this.jobs.entries()) {
+        if (job.completedAt && (now - job.completedAt.getTime()) > this.JOB_TTL_MS) {
+          this.jobs.delete(jobId);
+        }
+      }
+    }, 5 * 60 * 1000); // Check every 5 minutes
+  }
+
+  /**
+   * Stop cleanup timer (for shutdown)
+   */
+  stop(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+  }
+}
+
+// Global job tracker instance
+const jobTracker = new JobTracker();
 
 // ==================== Helper Functions ====================
 
@@ -125,6 +243,61 @@ export class SuperMemoryServer {
       sourcePath: entry.sourcePath,
       timestamp: entry.timestamp,
     };
+  }
+
+  /**
+   * Spawn background indexing task for a job
+   */
+  private spawnBackgroundIndexing(jobId: string): void {
+    const indexer = this.context.indexer;
+    if (!indexer) {
+      jobTracker.failJob(jobId, 'Project indexer not initialized');
+      return;
+    }
+
+    // Start indexing without waiting
+    indexer.start().then(async () => {
+      try {
+        // Set up progress tracking via polling
+        const pollInterval = setInterval(() => {
+          const job = jobTracker.getJob(jobId);
+          if (!job || job.status !== 'running') {
+            clearInterval(pollInterval);
+            return;
+          }
+
+          const stats = indexer.getStats();
+          jobTracker.updateProgress(jobId, {
+            totalFiles: stats.totalFiles,
+            indexedFiles: stats.indexedFiles,
+            failedFiles: stats.failedFiles,
+            totalChunks: stats.totalChunks,
+          });
+        }, 1000); // Poll every second
+
+        // Wait for initial indexing to complete
+        await new Promise<void>((resolve) => {
+          indexer.once('stats', () => resolve());
+          // Safety timeout - if no stats event within 5 minutes, complete anyway
+          setTimeout(resolve, 5 * 60 * 1000);
+        });
+
+        clearInterval(pollInterval);
+
+        // Final stats update
+        const finalStats = indexer.getStats();
+        jobTracker.completeJob(jobId, {
+          totalFiles: finalStats.totalFiles,
+          indexedFiles: finalStats.indexedFiles,
+          failedFiles: finalStats.failedFiles,
+          totalChunks: finalStats.totalChunks,
+        });
+      } catch (error) {
+        jobTracker.failJob(jobId, error instanceof Error ? error.message : 'Unknown error');
+      }
+    }).catch((error) => {
+      jobTracker.failJob(jobId, error instanceof Error ? error.message : 'Unknown error');
+    });
   }
 
   /**
@@ -309,14 +482,15 @@ export class SuperMemoryServer {
     this.server.registerTool(
       'index_project',
       {
-        description: 'Trigger project indexing. Scans and indexes all supported files in the project.',
+        description: 'Trigger project indexing. Scans and indexes all supported files in the project. Use background=true for large directories to avoid MCP timeouts.',
         inputSchema: {
           path: z.string().optional().describe('Directory to index'),
           force: z.boolean().default(false).describe('Force re-indexing'),
+          background: z.boolean().default(true).describe('Run indexing in background (recommended for large projects)'),
         },
         annotations: { destructiveHint: true },
       },
-      async ({ path, force }: { path?: string; force: boolean }) => {
+      async ({ path, force, background }: { path?: string; force: boolean; background: boolean }) => {
         // Handle path parameter - reconfigure or create indexer with specified path
         if (path) {
           if (this.context.indexer) {
@@ -351,8 +525,29 @@ export class SuperMemoryServer {
         }
 
         const indexPath = this.context.indexer.getRootPath();
-        logger.info(`Indexing project: ${indexPath} (force: ${force})`);
+        logger.info(`Indexing project: ${indexPath} (force: ${force}, background: ${background})`);
 
+        // Background mode: spawn indexing asynchronously
+        if (background) {
+          const jobId = jobTracker.createJob();
+
+          // Spawn background indexing
+          this.spawnBackgroundIndexing(jobId);
+
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: true,
+                jobId,
+                status: 'started',
+                message: 'Indexing started in background. Use index_project_status to check progress.',
+              }),
+            }],
+          };
+        }
+
+        // Synchronous mode (backward compatible)
         try {
           await this.context.indexer.start();
 
@@ -388,6 +583,51 @@ export class SuperMemoryServer {
             isError: true,
           };
         }
+      }
+    );
+
+    // index_project_status tool
+    this.server.registerTool(
+      'index_project_status',
+      {
+        description: 'Check the status of a background indexing job. Use the jobId returned from index_project with background=true.',
+        inputSchema: {
+          jobId: z.string().describe('The job ID returned from index_project'),
+        },
+        annotations: { readOnlyHint: true },
+      },
+      async ({ jobId }: { jobId: string }) => {
+        const job = jobTracker.getJob(jobId);
+
+        if (!job) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                error: 'Job not found. The job may have expired or never existed.',
+              }),
+            }],
+            isError: true,
+          };
+        }
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              status: job.status,
+              progress: {
+                totalFiles: job.progress.totalFiles,
+                indexedFiles: job.progress.indexedFiles,
+                failedFiles: job.progress.failedFiles,
+                totalChunks: job.progress.totalChunks,
+              },
+              error: job.error,
+              startedAt: job.startedAt,
+              completedAt: job.completedAt,
+            }),
+          }],
+        };
       }
     );
   }
@@ -472,6 +712,9 @@ export class SuperMemoryServer {
       if (this.context.indexer) {
         await this.context.indexer.stop();
       }
+
+      // Stop job tracker
+      jobTracker.stop();
 
       // Close server
       await this.server.close();

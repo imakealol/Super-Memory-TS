@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.3.1] - 2026-04-27
+
+### Fixed
+- **MCP timeout on large projects**: `index_project` now runs in background mode by default to prevent MCP timeout errors
+- Fixed async background indexing in `ProjectIndexer` to properly handle large directory indexing
+
+### Added
+- **index_project_status tool**: New MCP tool for polling indexing progress
+- **Progress tracking callbacks**: Added callback support to indexer for tracking indexing progress
+
+### Changed
+- **index_project default**: Now defaults to `background=true` to prevent MCP timeout
+
 ## [2.3.0] - 2026-04-27
 
 ### Added
