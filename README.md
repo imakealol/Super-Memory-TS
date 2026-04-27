@@ -2,6 +2,8 @@
 
 **Local-first semantic memory server with project indexing for AI assistants.**
 
+> **Version**: v2.2.2 | **Database**: Qdrant | **Embeddings**: BGE-Large (GPU) / MiniLM-L6-v2 (CPU)
+
 Super-Memory-TS is a TypeScript implementation of a persistent, local-first memory system that provides semantic search over memories and project code using embeddings and vector search. It runs as an MCP (Model Context Protocol) server, enabling AI assistants like Boomerang to store, retrieve, and search through accumulated knowledge.
 
 ## Table of Contents
@@ -20,9 +22,9 @@ Super-Memory-TS is a TypeScript implementation of a persistent, local-first memo
 
 ## Overview
 
-### What is Super-Memory v2.0?
+### What is Super-Memory v2?
 
-Super-Memory v2.0 is a complete rewrite of the original Python-based memory system in TypeScript. It provides:
+Super-Memory v2 is a complete rewrite of the original Python-based memory system in TypeScript. It provides:
 
 - **Semantic Memory Search**: Store and retrieve memories using natural language queries
 - **Project Indexing**: Automatically index project files for code-aware search
@@ -42,10 +44,48 @@ Super-Memory v2.0 is a complete rewrite of the original Python-based memory syst
 | **Incremental Indexing** | SHA-256 hash-based change detection for efficient updates |
 | **Semantic Chunking** | Intelligent code splitting at function/class boundaries |
 | **Reference Counting** | Singleton model manager prevents VRAM duplication |
+| **Project Isolation** | Payload-based filtering by `projectId` for multi-project memory separation |
+| **Tiered Search** | Fast Reply (tiered) and Archivist (parallel) search modes |
 
 ---
 
 ## Features
+
+### Project Isolation
+
+Super-Memory-TS supports **multi-project memory isolation** using `projectId` tagging in Qdrant payloads.
+
+#### How It Works
+
+1. **Set Project ID** via `BOOMERANG_PROJECT_ID` environment variable:
+   ```bash
+   export BOOMERANG_PROJECT_ID=my-project
+   ```
+
+2. **Automatic Tagging**: All memories added are tagged with `projectId` in the Qdrant payload
+
+3. **Automatic Filtering**: Queries are automatically filtered by `projectId` - you only see memories from the current project
+
+4. **Backward Compatible**: Memories without a `projectId` tag are still searchable (untagged memories are visible to all projects)
+
+#### Use Cases
+
+- **Single project**: Set `BOOMERANG_PROJECT_ID` once, all operations are isolated
+- **Multiple projects**: Change `BOOMERANG_PROJECT_ID` to switch between projects
+- **Shared memories**: Omit `BOOMERANG_PROJECT_ID` to create cross-project shared memories
+
+#### Example
+
+```typescript
+// In project "backend-api"
+await memorySystem.addMemory({ text: "Use JWT for auth" });
+// → Stored with projectId: "backend-api"
+
+// Query from "backend-api" → Returns the JWT memory
+// Query from "frontend-app" → Does NOT see the JWT memory
+```
+
+---
 
 ### Semantic Memory Search
 
@@ -71,6 +111,83 @@ Index project files on startup with background watching for changes:
 - Semantic chunking preserves code structure (functions, classes)
 - Incremental updates via SHA-256 hash comparison
 - File watching with debouncing (500ms)
+
+#### Custom Path Indexing
+
+You can index any directory using the `path` parameter in the `index_project` tool:
+
+```json
+{
+  "path": "/path/to/other/project",
+  "force": true
+}
+```
+
+**Use cases**:
+- Index a subdirectory of your project
+- Index a completely different codebase
+- Re-index specific folders after major changes
+
+**Example**: Index a shared library:
+```json
+{
+  "path": "/home/user/Projects/shared-utils",
+  "force": false
+}
+```
+
+### Tiered Memory Architecture
+
+Super-Memory-TS provides **two search strategies** optimized for different use cases:
+
+| Mode | Strategy | Description | Best For |
+|------|----------|-------------|----------|
+| **Fast Reply** | `TIERED` (default) | Quick MiniLM search with BGE fallback | Interactive queries, real-time responses |
+| **Archivist** | `PARALLEL` | Dual-tier search with RRF fusion | Comprehensive recall, research tasks |
+
+#### Fast Reply (TIERED)
+
+Hybrid approach optimized for speed:
+
+1. **Primary**: MiniLM-L6-v2 (384-dim) search - fast CPU-based search
+2. **Fallback**: BGE-Large (1024-dim) for refinement when MiniLM results are ambiguous
+3. **Use when**: Speed matters, general purpose queries
+
+```
+Query → MiniLM Search → [if low confidence] → BGE Refinement → Results
+```
+
+#### Archivist (PARALLEL)
+
+Dual-tier search optimized for recall:
+
+1. **Parallel**: Both MiniLM and BGE searches run simultaneously
+2. **Fusion**: Reciprocal Rank Fusion (RRF) combines results
+3. **Use when**: Thorough search is needed, research, debugging
+
+```
+Query → MiniLM Search ─┐
+                       ├→ RRF Fusion → Results
+       → BGE Search   ─┘
+```
+
+#### Configuration
+
+```bash
+# Default: TIERED (Fast Reply)
+BOOMERANG_SEARCH_STRATEGY=tiered
+
+# Archivist mode for maximum recall
+BOOMERANG_SEARCH_STRATEGY=parallel
+```
+
+Or via MCP tool:
+```json
+{
+  "query": "authentication middleware",
+  "strategy": "parallel"
+}
+```
 
 ### HNSW Vector Search
 
@@ -476,6 +593,8 @@ Settings are merged in the following order (highest to lowest):
 | `BOOMERANG_CHUNK_SIZE` | `512` | Token chunk size for indexing |
 | `BOOMERANG_CHUNK_OVERLAP` | `50` | Overlap between chunks |
 | `BOOMERANG_MAX_FILE_SIZE` | `10485760` | Max file size (bytes) to index |
+| `BOOMERANG_PROJECT_ID` | - | Project identifier for memory isolation |
+| `BOOMERANG_SEARCH_STRATEGY` | `tiered` | Default search strategy: `tiered`, `parallel` |
 
 ---
 
@@ -749,6 +868,15 @@ Strategy: TIERED
 - **ESM Modules**: Native support in Node.js 20+
 - **MCP SDK**: Official TypeScript SDK available
 - **Bundle Size**: Lighter than Python runtime
+
+### Search Strategy Selection
+
+| Scenario | Recommended Strategy |
+|----------|---------------------|
+| Interactive chat, speed critical | `tiered` (Fast Reply) |
+| Research, debugging, thorough recall | `parallel` (Archivist) |
+| Exact keyword matching | `text_only` |
+| Pure semantic similarity | `vector_only` |
 
 ### Singleton Model Manager
 

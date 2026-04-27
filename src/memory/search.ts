@@ -19,6 +19,11 @@ import {
 import { generateEmbeddings } from '../model/embeddings.js';
 import { logger } from '../utils/logger.js';
 
+/** Qdrant search result with similarity score */
+interface QdrantMemoryResult extends MemoryEntry {
+  _similarity?: number;
+}
+
 /**
  * Fuse.js configuration for text search
  */
@@ -128,7 +133,7 @@ export class MemorySearch {
 
     // If we have vector results and top score meets threshold, return them
     if (vectorResults.length > 0) {
-      const topScore = (vectorResults[0] as any)._similarity ?? 0;
+      const topScore = (vectorResults[0] as QdrantMemoryResult)._similarity ?? 0;
       if (topScore >= threshold) {
         return vectorResults.slice(0, topK);
       }

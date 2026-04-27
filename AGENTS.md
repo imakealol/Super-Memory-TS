@@ -3,13 +3,33 @@
 **Role**: NPM-publishable MCP server with local embeddings and vector search  
 **Package**: `@veedubin/super-memory-ts`  
 **Repository**: https://github.com/Veedubin/Super-Memory-TS  
-**License**: MIT
+**License**: MIT  
+**Current Version**: v2.2.2
 
 ---
 
 ## Why This Exists
 
-This project was previously an unpublished local directory with no Git repository. To publish to NPM, we created the GitHub repo, initialized git, and set up automated publishing via GitHub Actions.
+This project provides a local-first semantic memory system with project isolation, tiered search strategies, and MCP protocol integration for AI assistants like Boomerang.
+
+---
+
+## Architecture (v2.2.2)
+
+| Component | Technology | Notes |
+|-----------|------------|-------|
+| **Database** | Qdrant (v1.7+) | HNSW indexing, payload filtering |
+| **Embeddings** | BGE-Large (1024-dim, GPU) / MiniLM-L6-v2 (384-dim, CPU) | fp16 precision by default |
+| **Protocol** | MCP (Model Context Protocol) | stdio/HTTP modes |
+| **Integration** | Built-in for Boomerang v2 | Zero-overhead direct imports |
+
+### Key Features
+
+- **Project Isolation**: Payload-based filtering via `BOOMERANG_PROJECT_ID`
+- **Custom Path Indexing**: `index_project` tool accepts custom `path` parameter
+- **Tiered Search**:
+  - `tiered` (default): Fast Reply - MiniLM + BGE fallback
+  - `parallel`: Archivist - Dual-tier RRF fusion for maximum recall
 
 ---
 
@@ -81,7 +101,7 @@ Super-Memory-TS/
 
 ## Database Backend
 
-**v2.0.0+**: Uses Qdrant (`@qdrant/js-client-rest`) instead of LanceDB.
+**v2.0.0+**: Qdrant (`@qdrant/js-client-rest`) with payload-based project isolation.
 
 ### Running Qdrant
 
@@ -93,6 +113,7 @@ docker run -p 6333:6333 -v $(pwd)/qdrant_storage:/qdrant/storage qdrant/qdrant
 
 ```bash
 export QDRANT_URL=http://localhost:6333  # default
+export BOOMERANG_PROJECT_ID=my-project   # optional, for project isolation
 ```
 
 ### MCP Server Config for Boomerang
@@ -102,7 +123,10 @@ export QDRANT_URL=http://localhost:6333  # default
   "super-memory-ts": {
     "type": "local",
     "command": ["npx", "-y", "@veedubin/super-memory-ts"],
-    "environment": { "QDRANT_URL": "http://localhost:6333" },
+    "environment": {
+      "QDRANT_URL": "http://localhost:6333",
+      "BOOMERANG_PROJECT_ID": "my-project"
+    },
     "enabled": true
   }
 }
@@ -112,16 +136,14 @@ export QDRANT_URL=http://localhost:6333  # default
 
 ## Review Notes
 
-- **2025-04-24**: Migrated from LanceDB to Qdrant for v2.0.0
-- **Breaking change**: `uri` parameter is now a Qdrant URL (e.g., `http://localhost:6333`) instead of filesystem path
-- **Removed**: Global write queues (Qdrant handles concurrency natively)
-- **Build**: `tsc` compiles successfully
-- **Quality**: All checks (typecheck, build) passing
+| Version | Date | Changes |
+|---------|------|---------|
+| **v2.2.2** | 2026-04-27 | Custom path indexing via `index_project` tool, tiered search documentation |
+| **v2.2.1** | 2026-04-26 | MCP connection fix, Qdrant filter bug fix |
+| **v2.2.0** | 2026-04-25 | Per-project memory isolation via `BOOMERANG_PROJECT_ID` |
+| **v2.0.0** | 2025-04-24 | Migrated from LanceDB to Qdrant |
 
----
+### Migration Notes
 
-## Next Steps for Publishing
-
-1. Ensure `NPM_PUBLISH_TOKEN` secret exists in https://github.com/Veedubin/Super-Memory-TS/settings/secrets/actions
-2. Push a tag: `git tag v1.0.0 && git push origin v1.0.0`
-3. Verify package appears at https://www.npmjs.com/package/@veedubin/super-memory-ts
+- **v2.0.0**: `uri` parameter replaced with Qdrant URL (e.g., `http://localhost:6333`)
+- **v2.0.0**: Global write queues removed (Qdrant handles concurrency natively)

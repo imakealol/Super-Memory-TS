@@ -1,5 +1,33 @@
 # Changelog
 
+## [2.3.0] - 2026-04-27
+
+### Added
+- Project isolation verification and end-to-end tests
+- Custom path indexing support in `index_project` MCP tool
+- Memory migration script (`scripts/migrate-memories.ts`) for tagging untagged memories
+- Performance benchmark script (`scripts/benchmark.ts`)
+- Comprehensive search strategy tests (44 tests covering TIERED, VECTOR_ONLY, TEXT_ONLY, PARALLEL)
+- Edge case tests (36 tests for error handling and boundary conditions)
+- Migration tests (19 tests)
+- GitHub Actions CI workflow at root level
+- SECURITY.md documenting vulnerability risk register
+- TROUBLESHOOTING.md with deprecation notes and migration guide
+
+### Fixed
+- All ESLint errors and warnings (added proper TypeScript interfaces)
+- npm audit vulnerabilities (uuid updated to 14.0.0, zero fixable vulnerabilities remaining)
+- Agent permission configuration for /tmp and common operations
+- boomerang-tester skill model reference (Gemini 3 Pro → MiniMax M2.7)
+
+### Changed
+- Updated AGENTS.md and README.md with v2.2.2/v2.3.0 architecture documentation
+- Enhanced documentation for tiered memory architecture and search strategies
+
+### Security
+- Fixed uuid <14.0.0 moderate vulnerability (GHSA-w5hq-g745-h8pq)
+- Documented accepted risks for @modelcontextprotocol/sdk and protobufjs upstream vulnerabilities
+
 ## [2.2.2] - 2026-04-27
 
 ### Fixed

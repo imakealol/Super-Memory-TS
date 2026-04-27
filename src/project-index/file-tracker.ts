@@ -8,6 +8,14 @@ export interface TrackedFile {
   chunkCount: number;
 }
 
+/** Database row shape for indexed_files table */
+interface IndexedFileRow {
+  file_path: string;
+  content_hash: string;
+  last_indexed: string;
+  chunk_count: number;
+}
+
 /**
  * SQLite-based persistent file tracker to avoid re-indexing unchanged files.
  */
@@ -34,7 +42,7 @@ export class FileTracker {
   }
 
   getFile(filePath: string): TrackedFile | undefined {
-    const row = this.db.prepare('SELECT * FROM indexed_files WHERE file_path = ?').get(filePath) as any;
+    const row = this.db.prepare('SELECT * FROM indexed_files WHERE file_path = ?').get(filePath) as IndexedFileRow | undefined;
     if (!row) return undefined;
     return {
       hash: row.content_hash,
@@ -55,7 +63,7 @@ export class FileTracker {
   }
 
   getAllFiles(): Map<string, TrackedFile> {
-    const rows = this.db.prepare('SELECT * FROM indexed_files').all() as any[];
+    const rows = this.db.prepare('SELECT * FROM indexed_files').all() as IndexedFileRow[];
     const map = new Map<string, TrackedFile>();
     for (const row of rows) {
       map.set(row.file_path, {

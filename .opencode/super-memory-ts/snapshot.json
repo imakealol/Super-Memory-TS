@@ -1,0 +1,438 @@
+{
+  "version": 1,
+  "createdAt": 1777267741807,
+  "files": {
+    "tsconfig.json": {
+      "hash": "60509edea42d5f4b",
+      "size": 618,
+      "mtime": 1776934994278.015,
+      "lastIndexed": 1777267197689
+    },
+    "test-model.ts": {
+      "hash": "948bf3a53bac2d53",
+      "size": 11462,
+      "mtime": 1776936795092.2588,
+      "lastIndexed": 1777267197689
+    },
+    "package.json": {
+      "hash": "66058268ad45ca07",
+      "size": 1534,
+      "mtime": 1777265590817.9192,
+      "lastIndexed": 1777267197689
+    },
+    "package-lock.json": {
+      "hash": "10cc7d7694f54a0b",
+      "size": 185373,
+      "mtime": 1777108858550.736,
+      "lastIndexed": 1777267197690
+    },
+    "eslint.config.js": {
+      "hash": "153ab7577119fcdc",
+      "size": 1254,
+      "mtime": 1777108923198.0576,
+      "lastIndexed": 1777267197690
+    },
+    "TASKS.md": {
+      "hash": "975d826112f4c70f",
+      "size": 3271,
+      "mtime": 1777109884007.85,
+      "lastIndexed": 1777267197690
+    },
+    "SNAPSHOT_DESIGN.md": {
+      "hash": "17db5de70efdd6e3",
+      "size": 20451,
+      "mtime": 1777076622974.342,
+      "lastIndexed": 1777267197690
+    },
+    "README.md": {
+      "hash": "da33eca6ffaaee1e",
+      "size": 29379,
+      "mtime": 1777108668409.8625,
+      "lastIndexed": 1777267197691
+    },
+    "QDRANT_MIGRATION_PLAN.md": {
+      "hash": "956f3eceaf18480e",
+      "size": 25281,
+      "mtime": 1777079250532.9539,
+      "lastIndexed": 1777267197691
+    },
+    "PROJECT_ISOLATION_PLAN.md": {
+      "hash": "6f1b465ca0036340",
+      "size": 31723,
+      "mtime": 1777264133777.7393,
+      "lastIndexed": 1777267197691
+    },
+    "LICENSE": {
+      "hash": "bc3a8eaab91532ad",
+      "size": 1064,
+      "mtime": 1777002495586.8806,
+      "lastIndexed": 1777267197691
+    },
+    "IMPLEMENTATION_PLAN.md": {
+      "hash": "0f4c6a41ab445341",
+      "size": 40021,
+      "mtime": 1777107266462.8657,
+      "lastIndexed": 1777267197691
+    },
+    "CHANGELOG.md": {
+      "hash": "d2dc2c2903d2175c",
+      "size": 3270,
+      "mtime": 1777105393135.3372,
+      "lastIndexed": 1777267197692
+    },
+    "AGENTS.md": {
+      "hash": "3f0f59cd6490247f",
+      "size": 3315,
+      "mtime": 1777081344876.5679,
+      "lastIndexed": 1777267197692
+    },
+    "tests/server.test.ts": {
+      "hash": "408cc6be93e0c6d9",
+      "size": 22959,
+      "mtime": 1777108636663.2947,
+      "lastIndexed": 1777267197692
+    },
+    "tests/search.test.ts": {
+      "hash": "00b237ceeaa7176d",
+      "size": 993,
+      "mtime": 1777108680433.1067,
+      "lastIndexed": 1777267197692
+    },
+    "tests/project-index.test.ts": {
+      "hash": "85682074599946e2",
+      "size": 21482,
+      "mtime": 1776962743272.8567,
+      "lastIndexed": 1777267197692
+    },
+    "tests/integration.test.ts": {
+      "hash": "7d0fcd6b7c804f36",
+      "size": 1552,
+      "mtime": 1777108674706.9905,
+      "lastIndexed": 1777267197692
+    },
+    "tests/integration-test.cjs": {
+      "hash": "2bdad37d4c8157dc",
+      "size": 6636,
+      "mtime": 1776937428051.5803,
+      "lastIndexed": 1777267197692
+    },
+    "tests/index.test.ts": {
+      "hash": "da209197c2806778",
+      "size": 194,
+      "mtime": 1776936756259.4387,
+      "lastIndexed": 1777267197693
+    },
+    "src/server.ts": {
+      "hash": "98eadf70ef608191",
+      "size": 14673,
+      "mtime": 1777264374420.9102,
+      "lastIndexed": 1777267197693
+    },
+    "src/index.ts": {
+      "hash": "5628f2837a6cd459",
+      "size": 2801,
+      "mtime": 1777074051186.8037,
+      "lastIndexed": 1777267197693
+    },
+    "src/config.ts": {
+      "hash": "536053f8fafd36ad",
+      "size": 17795,
+      "mtime": 1777264330088.9578,
+      "lastIndexed": 1777267197693
+    },
+    "bin/super-memory-ts.cjs": {
+      "hash": "ff8af7f9cccb9f50",
+      "size": 755,
+      "mtime": 1777074449880.7778,
+      "lastIndexed": 1777267197693
+    },
+    "tests/test-project/sample.ts": {
+      "hash": "bcf61c004d647429",
+      "size": 1235,
+      "mtime": 1776936794239.2407,
+      "lastIndexed": 1777267197693
+    },
+    "tests/test-project/sample.py": {
+      "hash": "5ce220e951cfc047",
+      "size": 1402,
+      "mtime": 1776936802186.4087,
+      "lastIndexed": 1777267197693
+    },
+    "tests/test-project/sample.md": {
+      "hash": "da08b9c355a3c35f",
+      "size": 908,
+      "mtime": 1776936806976.5098,
+      "lastIndexed": 1777267197693
+    },
+    "tests/test-project/sample.json": {
+      "hash": "6220e4232668fb05",
+      "size": 423,
+      "mtime": 1776936809246.5576,
+      "lastIndexed": 1777267197693
+    },
+    "src/utils/logger.ts": {
+      "hash": "89538c1d9e8edd2b",
+      "size": 1993,
+      "mtime": 1776937291738.7166,
+      "lastIndexed": 1777267197693
+    },
+    "src/utils/hash.ts": {
+      "hash": "5f08eed997ffa49e",
+      "size": 1596,
+      "mtime": 1776936025807.8542,
+      "lastIndexed": 1777267197694
+    },
+    "src/utils/errors.ts": {
+      "hash": "800d3e6cd3b1c8ab",
+      "size": 2853,
+      "mtime": 1776935883062.7456,
+      "lastIndexed": 1777267197694
+    },
+    "src/project-index/watcher.ts": {
+      "hash": "a28949bb6f2d1a5a",
+      "size": 9877,
+      "mtime": 1777076842571.9387,
+      "lastIndexed": 1777267197694
+    },
+    "src/project-index/types.ts": {
+      "hash": "0bd0a9c4368ca7ee",
+      "size": 3279,
+      "mtime": 1777081035004.5562,
+      "lastIndexed": 1777267197694
+    },
+    "src/project-index/snapshot.ts": {
+      "hash": "aee8d7dff21cdd3a",
+      "size": 3969,
+      "mtime": 1777079465653.5178,
+      "lastIndexed": 1777267197694
+    },
+    "src/project-index/pause-controller.ts": {
+      "hash": "3882244cb0bb7338",
+      "size": 1364,
+      "mtime": 1777081018604.217,
+      "lastIndexed": 1777267197694
+    },
+    "src/project-index/indexer.ts": {
+      "hash": "dc63e4280b2e5e78",
+      "size": 28594,
+      "mtime": 1777264626345.321,
+      "lastIndexed": 1777267197694
+    },
+    "src/project-index/index.ts": {
+      "hash": "4af057dcdc8df811",
+      "size": 1082,
+      "mtime": 1776935396545.29,
+      "lastIndexed": 1777267197694
+    },
+    "src/project-index/file-tracker.ts": {
+      "hash": "d340da7bf4f6821d",
+      "size": 1978,
+      "mtime": 1777070023810.986,
+      "lastIndexed": 1777267197695
+    },
+    "src/project-index/chunker.ts": {
+      "hash": "c5c76dcce6eaf08f",
+      "size": 11730,
+      "mtime": 1777071502166.2666,
+      "lastIndexed": 1777267197695
+    },
+    "src/model/types.ts": {
+      "hash": "902573208bdb74db",
+      "size": 2770,
+      "mtime": 1776935132913.86,
+      "lastIndexed": 1777267197695
+    },
+    "src/model/index.ts": {
+      "hash": "213a2dd2bc93f7b7",
+      "size": 7257,
+      "mtime": 1777108422790.8972,
+      "lastIndexed": 1777267197695
+    },
+    "src/model/embeddings.ts": {
+      "hash": "8b801306efd56c9a",
+      "size": 5423,
+      "mtime": 1776935154713.308,
+      "lastIndexed": 1777267197695
+    },
+    "src/memory/search.ts": {
+      "hash": "0c1c00a3b1b429c3",
+      "size": 7747,
+      "mtime": 1777108416737.7756,
+      "lastIndexed": 1777267197695
+    },
+    "src/memory/schema.ts": {
+      "hash": "f1b063551b0faec1",
+      "size": 3818,
+      "mtime": 1777264270620.68,
+      "lastIndexed": 1777267197695
+    },
+    "src/memory/index.ts": {
+      "hash": "55df929c5f93f3a5",
+      "size": 5370,
+      "mtime": 1777264357560.5479,
+      "lastIndexed": 1777267197695
+    },
+    "src/memory/database.ts": {
+      "hash": "93b0c19a6b9118c2",
+      "size": 18442,
+      "mtime": 1777264517150.9758,
+      "lastIndexed": 1777267197695
+    },
+    "tests/test-project/integration-test-1776962107189/test.ts": {
+      "hash": "aae57a7e80191ed2",
+      "size": 40,
+      "mtime": 1776962107189.1094,
+      "lastIndexed": 1777267197695
+    },
+    "tests/test-project/integration-test-1776962107189/test.py": {
+      "hash": "5820871850838509",
+      "size": 27,
+      "mtime": 1776962107189.1094,
+      "lastIndexed": 1777267197696
+    },
+    "tests/test-project/integration-test-1776962107189/test.md": {
+      "hash": "33057d2a92a12cbf",
+      "size": 26,
+      "mtime": 1776962107189.1094,
+      "lastIndexed": 1777267197696
+    },
+    "tests/test-project/integration-test-1776962107189/test.json": {
+      "hash": "946fa14bc0fe3c16",
+      "size": 16,
+      "mtime": 1776962107189.1094,
+      "lastIndexed": 1777267197696
+    },
+    "tests/test-project/indexer-test-1776970701839/test.ts": {
+      "hash": "0f3786d82e430f54",
+      "size": 19,
+      "mtime": 1776970701838.1577,
+      "lastIndexed": 1777267197696
+    },
+    "tests/test-project/indexer-test-1776970340939/test.ts": {
+      "hash": "0f3786d82e430f54",
+      "size": 19,
+      "mtime": 1776970340939.7122,
+      "lastIndexed": 1777267197696
+    },
+    "tests/test-project/indexer-test-1776970171927/test.ts": {
+      "hash": "0f3786d82e430f54",
+      "size": 19,
+      "mtime": 1776970171926.1545,
+      "lastIndexed": 1777267197696
+    },
+    "tests/test-project/indexer-test-1776968856998/test.ts": {
+      "hash": "0f3786d82e430f54",
+      "size": 19,
+      "mtime": 1776968856997.3967,
+      "lastIndexed": 1777267197696
+    },
+    "tests/test-project/indexer-test-1776968079719/test.ts": {
+      "hash": "0f3786d82e430f54",
+      "size": 19,
+      "mtime": 1776968079718.9133,
+      "lastIndexed": 1777267197696
+    },
+    "tests/test-project/indexer-test-1776967009604/test.ts": {
+      "hash": "0f3786d82e430f54",
+      "size": 19,
+      "mtime": 1776967009603.554,
+      "lastIndexed": 1777267197696
+    },
+    "tests/test-project/indexer-test-1776966725554/test.ts": {
+      "hash": "0f3786d82e430f54",
+      "size": 19,
+      "mtime": 1776966725553.6655,
+      "lastIndexed": 1777267197697
+    },
+    "tests/test-project/indexer-test-1776966189213/test.ts": {
+      "hash": "0f3786d82e430f54",
+      "size": 19,
+      "mtime": 1776966189212.564,
+      "lastIndexed": 1777267197697
+    },
+    "tests/test-project/indexer-test-1776966341324/test.ts": {
+      "hash": "0f3786d82e430f54",
+      "size": 19,
+      "mtime": 1776966341324.7852,
+      "lastIndexed": 1777267197697
+    },
+    "tests/test-project/indexer-test-1776965976735/test.ts": {
+      "hash": "0f3786d82e430f54",
+      "size": 19,
+      "mtime": 1776965976735.0564,
+      "lastIndexed": 1777267197697
+    },
+    "tests/test-project/indexer-test-1776965784242/test.ts": {
+      "hash": "0f3786d82e430f54",
+      "size": 19,
+      "mtime": 1776965784241.9614,
+      "lastIndexed": 1777267197697
+    },
+    "tests/test-project/indexer-test-1776962029517/test.ts": {
+      "hash": "0f3786d82e430f54",
+      "size": 19,
+      "mtime": 1776962029516.2656,
+      "lastIndexed": 1777267197697
+    },
+    "tests/test-project/indexer-test-1776961954947/sample.ts": {
+      "hash": "bcf61c004d647429",
+      "size": 1235,
+      "mtime": 1776961954946.743,
+      "lastIndexed": 1777267197697
+    },
+    "tests/test-project/indexer-test-1776961850722/sample.ts": {
+      "hash": "bcf61c004d647429",
+      "size": 1235,
+      "mtime": 1776961850721.6155,
+      "lastIndexed": 1777267197697
+    },
+    "tests/test-project/indexer-test-1776961666711/sample.ts": {
+      "hash": "bcf61c004d647429",
+      "size": 1235,
+      "mtime": 1776961666711.3904,
+      "lastIndexed": 1777267197697
+    },
+    "test_lancedb_issue/memories.lance/data/cb1ca188-ccbc-4810-9dfa-680113d8fc9c.lance": {
+      "hash": "0dbfa4d9dd72321d",
+      "size": 5832,
+      "mtime": 1776937193872.6592,
+      "lastIndexed": 1777267197698
+    },
+    "test_lancedb_issue/memories.lance/_versions/1.manifest": {
+      "hash": "5c4ea3c317e78215",
+      "size": 545,
+      "mtime": 1776937193873.639,
+      "lastIndexed": 1777267197698
+    },
+    "test_lancedb_issue/memories.lance/_transactions/0-b3a2770c-4e75-4cfb-886d-57d2f5db895a.txn": {
+      "hash": "0e734ae26e52456e",
+      "size": 476,
+      "mtime": 1776937193873.5684,
+      "lastIndexed": 1777267197698
+    },
+    "memory_data/memories.lance/data/bbca07ab-8b82-438a-b3b5-f3ceeb127bd3.lance": {
+      "hash": "0417d96dd6ddefcd",
+      "size": 5832,
+      "mtime": 1776937174612.2542,
+      "lastIndexed": 1777267197698
+    },
+    "memory_data/memories.lance/_versions/1.manifest": {
+      "hash": "b0a1454d283daed6",
+      "size": 545,
+      "mtime": 1776937174614.1636,
+      "lastIndexed": 1777267197698
+    },
+    "memory_data/memories.lance/_transactions/0-884e4d36-1424-459b-874a-31bf3c4adf04.txn": {
+      "hash": "6bc5fe53c88fd720",
+      "size": 476,
+      "mtime": 1776937174614.0786,
+      "lastIndexed": 1777267197698
+    },
+    "test-mcp-error.mjs": {
+      "hash": "aac27728e3949508",
+      "size": 826,
+      "mtime": 1777267469564.8967,
+      "lastIndexed": 1777267741807
+    }
+  }
+}
