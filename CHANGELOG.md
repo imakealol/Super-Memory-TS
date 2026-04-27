@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.2.1] - 2026-04-27
+
+### Fixed
+- **MemorySystem projectId fix**: Fixed `projectId` being lost on re-initialization in `src/memory/index.ts`
+- **Qdrant filter fix**: Fixed malformed Qdrant filters in `contentExists`, `queryMemories`, and `listMemories` in `src/memory/database.ts`
+
 ## [2.1.4] - 2026-04-25
 
 ### Fixed

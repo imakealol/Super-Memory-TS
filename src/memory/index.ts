@@ -49,10 +49,12 @@ export class MemorySystem {
   private initialized: boolean = false;
   private initializing: boolean = false;
   private initPromise: Promise<void> | null = null;
+  private projectId?: string;
 
   constructor(db?: MemoryDatabase, search?: MemorySearch, config?: { dbUri?: string; projectId?: string }) {
     this.db = db ?? new MemoryDatabase(config?.dbUri, config?.projectId);
     this.search = search ?? new MemorySearch(this.db);
+    this.projectId = config?.projectId;
   }
 
   /**
@@ -89,7 +91,7 @@ export class MemorySystem {
   private async _doInitialize(dbUri?: string): Promise<void> {
     // If dbUri provided and different from current, create new database
     if (dbUri) {
-      this.db = new MemoryDatabase(dbUri);
+      this.db = new MemoryDatabase(dbUri, this.projectId);
     }
     await this.db.initialize();
 
@@ -109,8 +111,11 @@ export class MemorySystem {
    * Add a memory entry
    */
   async addMemory(input: MemoryEntryInput): Promise<string> {
+    console.error('[MemorySystem.addMemory] input:', JSON.stringify({ text: input.text, sourceType: input.sourceType, sourcePath: input.sourcePath }));
     const id = await this.db.addMemory(input);
+    console.error('[MemorySystem.addMemory] db.addMemory completed, id:', id);
     await this.search.refreshIndex();
+    console.error('[MemorySystem.addMemory] refreshIndex completed');
     return id;
   }
 
@@ -178,11 +183,15 @@ export class MemorySystem {
    * Check if content already exists
    */
   async contentExists(text: string): Promise<boolean> {
+    console.error('[MemorySystem.contentExists] text:', text);
     const encoder = new TextEncoder();
     const data = encoder.encode(text);
+    console.error('[MemorySystem.contentExists] data encoded, calling crypto.subtle.digest');
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    console.error('[MemorySystem.contentExists] digest completed');
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    console.error('[MemorySystem.contentExists] hash:', hash);
 
     return this.db.contentExists(hash);
   }

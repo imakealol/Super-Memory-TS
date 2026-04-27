@@ -300,12 +300,25 @@ export class MemoryDatabase {
     const timestamp = Date.now();
     const contentHash = computeHash(input.text);
 
-    const vector = input.vector?.length
-      ? Array.isArray(input.vector) ? input.vector : Array.from(input.vector)
-      : (await generateEmbeddings([input.text]))[0].embedding;
+    let vector: number[];
+    try {
+      vector = input.vector?.length
+        ? Array.isArray(input.vector) ? input.vector : Array.from(input.vector)
+        : (await generateEmbeddings([input.text]))[0].embedding;
+    } catch (embErr) {
+      console.error('[DEBUG] Embedding generation failed:', embErr);
+      throw embErr;
+    }
+
+    console.error('[DEBUG] addMemory vector dim:', vector.length, 'projectId:', this.projectId);
 
     const point = toPoint(id, vector, input, timestamp, contentHash, this.projectId);
-    await withRetry(() => this.client.upsert(MEMORY_TABLE_NAME, { points: [point] }));
+    try {
+      await withRetry(() => this.client.upsert(MEMORY_TABLE_NAME, { points: [point] }));
+    } catch (upsertErr) {
+      console.error('[DEBUG] Qdrant upsert failed:', upsertErr);
+      throw upsertErr;
+    }
 
     return id;
   }
@@ -353,7 +366,7 @@ export class MemoryDatabase {
       must.push(projectFilter);
     }
 
-    const filter = must.length === 1 ? must[0] : { must };
+    const filter = { must };
 
     // Count before delete
     const countResult = await withRetry(() => this.client.count(MEMORY_TABLE_NAME, {
@@ -397,7 +410,7 @@ export class MemoryDatabase {
       }
     }
 
-    const filter = conditions.length === 0 ? undefined : conditions.length === 1 ? conditions[0] : { must: conditions };
+    const filter = conditions.length === 0 ? undefined : { must: conditions };
 
     const results = await withRetry(() => this.client.search(MEMORY_TABLE_NAME, {
       vector: queryVector,
@@ -450,7 +463,7 @@ export class MemoryDatabase {
       }
     }
 
-    const qdrantFilter = conditions.length === 0 ? undefined : conditions.length === 1 ? conditions[0] : { must: conditions };
+    const qdrantFilter = conditions.length === 0 ? undefined : { must: conditions };
 
     const results = await withRetry(() => this.client.scroll(MEMORY_TABLE_NAME, {
       filter: qdrantFilter,
@@ -485,7 +498,7 @@ export class MemoryDatabase {
       must.push(projectFilter);
     }
 
-    const filter = must.length === 1 ? must[0] : { must };
+    const filter = { must };
 
     const result = await withRetry(() => this.client.count(MEMORY_TABLE_NAME, {
       filter,
