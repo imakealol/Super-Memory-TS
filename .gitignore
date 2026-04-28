@@ -4,3 +4,8 @@ memory_data/
 .env
 *.log
 .DS_Store
+# Runtime artifacts
+.super-memory/
+file_tracker.db
+http:/
+qdrant_storage/

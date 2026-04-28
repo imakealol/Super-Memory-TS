@@ -651,7 +651,7 @@ if (this.pendingChunks.length >= this.config.flushThreshold) {
 
   /**
    * Schedule a flush of pending chunks to the database.
-   * Uses a timer to batch writes and avoid overwhelming LanceDB.
+   * Uses a timer to batch writes for efficient Qdrant ingestion.
    */
   private scheduleFlush(): void {
     // If buffer exceeds threshold, flush immediately

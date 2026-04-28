@@ -1,8 +1,11 @@
 # Super-Memory-TS
 
+[![npm version](https://img.shields.io/npm/v/@veedubin/super-memory-ts)](https://www.npmjs.com/package/@veedubin/super-memory-ts)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 **Local-first semantic memory server with project indexing for AI assistants.**
 
-> **Version**: v2.3.2 | **Database**: Qdrant (HNSW indexing, payload filtering) | **Embeddings**: BGE-Large (GPU, 1024-dim) / MiniLM-L6-v2 (CPU, 384-dim) | **Precision**: fp16 (~325MB)
+> **Version**: v2.3.3 | **Database**: Qdrant (HNSW indexing, payload filtering) | **Embeddings**: BGE-Large (GPU, 1024-dim) / MiniLM-L6-v2 (CPU, 384-dim) | **Precision**: fp16 (~325MB) | **NPM**: [@veedubin/super-memory-ts](https://www.npmjs.com/package/@veedubin/super-memory-ts)
 
 Super-Memory-TS is a TypeScript implementation of a persistent, local-first memory system that provides semantic search over memories and project code using embeddings and vector search. It runs as an MCP (Model Context Protocol) server, enabling AI assistants like Boomerang to store, retrieve, and search through accumulated knowledge.
 
@@ -965,10 +968,10 @@ await manager.acquire();  // Loads once, shares across users
 
 | Database | Pros | Cons |
 |----------|------|------|
-| **Qdrant** | REST API, payload filtering, HNSW, open source, scalable | Requires separate process |
-| LanceDB | Embedded, Arrow format | TypeScript support was immature at time of migration |
-| Chroma | Simple, local | Less mature ecosystem |
-| Pinecone | Managed, scalable | Requires API key, not self-hostable |
+| **Qdrant** | REST API, payload filtering, HNSW, open source | Requires separate process |
+| LanceDB | Embedded, Arrow format | TypeScript support was immature |
+| Chroma | Simple, local | Less mature |
+| Pinecone | Managed, scalable | Requires API key |
 
 ### Hybrid Chunking
 

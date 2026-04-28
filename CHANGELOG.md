@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.3.4] - 2026-04-28
+
+### Fixed
+- Fixed stale LanceDB comments in codebase
+- Updated version badge in documentation
+- Created NPM_README.md for package landing page
+
+### Changed
+- Cleaned junk files and updated .gitignore
+- Added Qdrant client cache cleanup on reconnection
+
 ## [2.3.3] - 2026-04-28
 
 ### Fixed

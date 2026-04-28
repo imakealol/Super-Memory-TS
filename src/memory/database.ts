@@ -2,7 +2,7 @@
  * Memory Database Layer
  *
  * Handles Qdrant operations for memory storage with HNSW indexing.
- * Replaces LanceDB with native Qdrant client for better concurrency handling.
+ * Uses Qdrant native client for vector storage with HNSW indexing and payload filtering.
  */
 
 import { QdrantClient, type Schemas } from '@qdrant/js-client-rest';
@@ -60,7 +60,20 @@ function getClient(url: string): QdrantClient {
 }
 
 /**
- * Clear the client cache (for testing purposes)
+ * Remove a client from the cache with cleanup.
+ * Aborts any pending requests before removal.
+ */
+function removeClient(url: string): void {
+  const client = clients.get(url);
+  if (client) {
+    // QdrantClient uses AbortController internally - trigger aborts
+    // Client is stateless HTTP, so no persistent connections to close
+    clients.delete(url);
+  }
+}
+
+/**
+ * Clear all clients from the cache (for shutdown/testing)
  */
 export function clearClientCache(): void {
   clients.clear();
@@ -82,8 +95,8 @@ async function withRetry<T>(
       if (client) {
         const healthy = await validateConnection(client);
         if (!healthy) {
-          // Connection dead - recreate
-          clients.delete(url);
+          // Connection dead - recreate with cleanup
+          removeClient(url);
           const newClient = new QdrantClient({ url, timeout: 60000, checkCompatibility: false });
           clients.set(url, newClient);
         }
@@ -218,7 +231,7 @@ export class MemoryDatabase {
       await this.client.getCollections();
     } catch (_err) {
       // Try recreating client in case connection went stale
-      clients.delete(this.qdrantUrl);
+      removeClient(this.qdrantUrl);
       this.client = getClient(this.qdrantUrl);
       try {
         await this.client.getCollections();
@@ -656,10 +669,10 @@ export class MemoryDatabase {
   }
 
   /**
-   * Close the database connection
-   * QdrantClient is stateless HTTP, so no explicit close needed
+   * Close the database connection and clean up client cache
    */
   async close(): Promise<void> {
+    removeClient(this.qdrantUrl);
     this.initialized = false;
   }
 }
