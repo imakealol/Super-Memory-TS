@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.3.5] - 2026-04-29
+
+### Fixed
+- README test commands now correctly reference `vitest` instead of `bun test`
+- Removed false "Python 3.10+" prerequisite (@xenova/transformers is pure JS/Node)
+- Removed duplicated ASCII art diagram in Architecture section
+
+### Added
+- Companion package section linking to @veedubin/boomerang-v2
+- NPM_README.md now also references companion package
+
 ## [2.3.4] - 2026-04-28
 
 ### Fixed

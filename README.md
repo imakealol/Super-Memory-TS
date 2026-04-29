@@ -5,9 +5,13 @@
 
 **Local-first semantic memory server with project indexing for AI assistants.**
 
-> **Version**: v2.3.4 | **Database**: Qdrant (HNSW indexing, payload filtering) | **Embeddings**: BGE-Large (GPU, 1024-dim) / MiniLM-L6-v2 (CPU, 384-dim) | **Precision**: fp16 (~325MB) | **NPM**: [@veedubin/super-memory-ts](https://www.npmjs.com/package/@veedubin/super-memory-ts)
+> **Version**: v2.3.5 | **Database**: Qdrant (HNSW indexing, payload filtering) | **Embeddings**: BGE-Large (GPU, 1024-dim) / MiniLM-L6-v2 (CPU, 384-dim) | **Precision**: fp16 (~325MB) | **NPM**: [@veedubin/super-memory-ts](https://www.npmjs.com/package/@veedubin/super-memory-ts)
 
 Super-Memory-TS is a TypeScript implementation of a persistent, local-first memory system that provides semantic search over memories and project code using embeddings and vector search. It runs as an MCP (Model Context Protocol) server, enabling AI assistants like Boomerang to store, retrieve, and search through accumulated knowledge.
+
+## 🤝 Companion Package
+
+Super-Memory-TS powers the memory system for [**@veedubin/boomerang-v2**](https://www.npmjs.com/package/@veedubin/boomerang-v2) — a multi-agent orchestration plugin for OpenCode with 14 specialized agents, 8-step protocol, and built-in semantic memory.
 
 ## Table of Contents
 
@@ -294,37 +298,6 @@ When integrated with Boomerang (built-in mode):
 2. **Watching**: FileWatcher monitors for changes with 500ms debounce
 3. **Incremental**: SHA-256 hash comparison skips unchanged files
 4. **Background**: All indexing runs in background without blocking agent operations
-┌─────────────────────────────────────────────────────────────────┐
-│                        SuperMemoryServer                         │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐│
-│  │  MCP Tools  │  │   Memory    │  │   ProjectIndexer        ││
-│  │             │  │   System    │  │                         ││
-│  │ query_      │  │             │  │  ┌─────────────────────┐ ││
-│  │ memories    │  │  ┌────────┐  │  │  │   FileWatcher      │ ││
-│  │             │  │  │Qdrant │  │  │  │   (chokidar)       │ ││
-│  │ add_memory  │──│  │  +     │  │  │  └─────────────────────┘ ││
-│  │             │  │  │ HNSW   │  │  │  ┌─────────────────────┐ ││
-│  │ search_     │  │  └────────┘  │  │  │   FileChunker       │ ││
-│  │ project     │  │             │  │  │   (semantic/sliding) │ ││
-│  │             │  │             │  │  └─────────────────────┘ ││
-│  │ index_      │  │             │  │                         ││
-│  │ project     │  │             │  │                         ││
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘│
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     ModelManager (Singleton)                     │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │                  @xenova/transformers                        │ │
-│  │  ┌─────────────────────┐    ┌─────────────────────────────┐ │ │
-│  │  │   BGE-Large         │    │    MiniLM-L6-v2             │ │ │
-│  │  │   (1024-dim, fp16)  │    │    (384-dim, fp32)         │ │ │
-│  │  │   ~325MB            │    │    ~80MB                    │ │ │
-│  │  └─────────────────────┘    └─────────────────────────────┘ │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-```
 
 ### Data Flow
 
@@ -455,7 +428,6 @@ interface MemoryEntry {
 
 **Optional**:
 - CUDA-capable GPU (for GPU acceleration)
-- Python 3.10+ (for @xenova/transformers)
 
 ### Install Dependencies
 
@@ -520,7 +492,7 @@ npm start
 | `npm run typecheck` | Type-check without emitting (`tsc --noEmit`) |
 | `npm run prepublishOnly` | Runs `npm run build` before publish |
 | `npm run dev` | Watch mode with `tsx` |
-| `npm run test` | Run tests with `bun test` |
+| `npm run test` | Run tests with `vitest` |
 | `npm run lint` | ESLint on `src/` |
 
 ### 3. Basic Usage Example
@@ -1042,14 +1014,14 @@ npm run build
 ### Running Tests
 
 ```bash
-# Run all tests (requires bun)
-npm test
+# Run all tests
+npx vitest run
 
 # Run with coverage
-bun test --coverage
+npx vitest run --coverage
 
 # Run specific test file
-bun test tests/server.test.ts
+npx vitest run tests/server.test.ts
 ```
 
 ### Contributing

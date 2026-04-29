@@ -101,6 +101,10 @@ await server.start();
 | **HNSW Vector Search** | Sub-10ms query latency |
 | **FP16 Support** | Reduce memory usage by 50% with floating-point precision |
 
+## Companion Package
+
+Pairs with [**@veedubin/boomerang-v2**](https://www.npmjs.com/package/@veedubin/boomerang-v2) — multi-agent orchestration for OpenCode with built-in Super-Memory-TS integration.
+
 ## Architecture
 
 ```
