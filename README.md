@@ -5,7 +5,7 @@
 
 **Local-first semantic memory server with project indexing for AI assistants.**
 
-> **Version**: v2.3.5 | **Database**: Qdrant (HNSW indexing, payload filtering) | **Embeddings**: BGE-Large (GPU, 1024-dim) / MiniLM-L6-v2 (CPU, 384-dim) | **Precision**: fp16 (~325MB) | **NPM**: [@veedubin/super-memory-ts](https://www.npmjs.com/package/@veedubin/super-memory-ts)
+> **Version**: v2.3.6 | **Database**: Qdrant (HNSW indexing, payload filtering) | **Embeddings**: BGE-Large (GPU, 1024-dim) / MiniLM-L6-v2 (CPU, 384-dim) | **Precision**: fp16 (~325MB) | **NPM**: [@veedubin/super-memory-ts](https://www.npmjs.com/package/@veedubin/super-memory-ts)
 
 Super-Memory-TS is a TypeScript implementation of a persistent, local-first memory system that provides semantic search over memories and project code using embeddings and vector search. It runs as an MCP (Model Context Protocol) server, enabling AI assistants like Boomerang to store, retrieve, and search through accumulated knowledge.
 
@@ -414,6 +414,28 @@ interface MemoryEntry {
 - Uses `chokidar` for cross-platform file watching
 - 500ms debounce to batch rapid changes
 - SHA-256 hash comparison for incremental updates
+
+---
+
+## Requirements
+
+| Requirement | Version | Notes |
+|-------------|---------|-------|
+| **Node.js** | ≥20.0.0 | Required for ESM modules |
+| **Qdrant** | Latest | Vector database (see below) |
+
+### Qdrant Setup
+
+Super-Memory-TS requires a running Qdrant instance. The easiest way is Docker:
+
+```bash
+docker run -p 6333:6333 -v $(pwd)/qdrant_storage:/qdrant/storage qdrant/qdrant
+```
+
+Or set a custom Qdrant URL:
+```bash
+export QDRANT_URL=http://your-qdrant-host:6333
+```
 
 ---
 

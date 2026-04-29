@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.3.6] - 2026-04-29
+
+### Fixed
+- Added prominent Requirements section with Qdrant setup instructions
+- Qdrant is now clearly documented as a hard dependency with Docker one-liner
+
 ## [2.3.5] - 2026-04-29
 
 ### Fixed
