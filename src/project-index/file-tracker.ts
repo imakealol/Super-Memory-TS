@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import { dirname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 
@@ -20,13 +20,13 @@ interface IndexedFileRow {
  * SQLite-based persistent file tracker to avoid re-indexing unchanged files.
  */
 export class FileTracker {
-  private db: Database.Database;
+  private db: DatabaseSync;
 
   constructor(dbPath: string) {
     const dir = dirname(dbPath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-    this.db = new Database(dbPath);
+    this.db = new DatabaseSync(dbPath);
     this.initTable();
   }
 
@@ -42,7 +42,7 @@ export class FileTracker {
   }
 
   getFile(filePath: string): TrackedFile | undefined {
-    const row = this.db.prepare('SELECT * FROM indexed_files WHERE file_path = ?').get(filePath) as IndexedFileRow | undefined;
+    const row = this.db.prepare('SELECT * FROM indexed_files WHERE file_path = ?').get(filePath) as unknown as IndexedFileRow | undefined;
     if (!row) return undefined;
     return {
       hash: row.content_hash,
@@ -63,7 +63,7 @@ export class FileTracker {
   }
 
   getAllFiles(): Map<string, TrackedFile> {
-    const rows = this.db.prepare('SELECT * FROM indexed_files').all() as IndexedFileRow[];
+    const rows = this.db.prepare('SELECT * FROM indexed_files').all() as unknown as IndexedFileRow[];
     const map = new Map<string, TrackedFile>();
     for (const row of rows) {
       map.set(row.file_path, {

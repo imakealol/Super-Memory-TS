@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.4.2] - 2026-05-01
+
+### Changed
+- **Replaced `better-sqlite3` with `node:sqlite`**: Switched from third-party `better-sqlite3` package to Node.js built-in `node:sqlite` module (available since Node 22.5.0)
+- Eliminates `prebuild-install@7.1.3` deprecation warning
+- Eliminates native dependency compilation during `npm install`
+- Updated Node.js engine requirement from `>=20.0.0` to `>=22.5.0`
+- Updated `tsconfig.json` `moduleResolution` from `bundler` to `NodeNext` for built-in module type support
+
 ## [2.4.1] - 2026-05-01
 
 ### Fixed

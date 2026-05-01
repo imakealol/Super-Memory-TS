@@ -11,14 +11,7 @@ npm warn deprecated prebuild-install@7.1.3: prebuild-install is deprecated.
 
 ### Why It Exists (Dependency Chain)
 
-The deprecation warning comes from **two separate dependency chains**:
-
-#### Super-Memory-TS
-```
-@veedubin/super-memory-ts
-└── better-sqlite3@11.x
-    └── prebuild-install@7.1.3
-```
+The deprecation warning comes from **one dependency chain** in boomerang-v2:
 
 #### boomerang-v2
 ```
@@ -28,6 +21,8 @@ The deprecation warning comes from **two separate dependency chains**:
         └── prebuild-install@7.1.3
 ```
 
+**Super-Memory-TS** no longer uses `better-sqlite3` — it uses Node.js built-in `node:sqlite` module since v2.4.2.
+
 ### Why It's Safe to Ignore
 
 1. **Builds work fine** - The packages function correctly despite the deprecation warning
@@ -35,20 +30,9 @@ The deprecation warning comes from **two separate dependency chains**:
 3. **No security fix coming** - The maintainer has archived the project
 4. **Runtime behavior unchanged** - The deprecation only affects the install-time build of native modules
 
-### The sharp Override (Super-Memory-TS only)
+### The sharp Override (boomerang-v2 only)
 
-A partial fix was applied in `Super-Memory-TS/package.json`:
-
-```json
-{
-  "//": "KNOWN ISSUE: prebuild-install@7.1.3 deprecation warning from better-sqlite3@11.x and sharp@0.32.x. Cannot be resolved without breaking changes. sharp@0.33+ removed prebuild-install but @xenova/transformers@2.17.x requires sharp@0.32.x. See: https://github.com/prebuild/prebuild-install/issues/287",
-  "overrides": {
-    "sharp": "^0.33.0"
-  }
-}
-```
-
-This override forces `sharp@0.33+` which removed the `prebuild-install` dependency. However, it doesn't fully eliminate the warning because `better-sqlite3` also pulls in `prebuild-install`.
+In `Super-Memory-TS/package.json`, a partial fix was applied to force `sharp@0.33+` which removed the `prebuild-install` dependency. However, this doesn't fully eliminate the warning because `better-sqlite3` (which was used in older versions) also pulled in `prebuild-install`. Super-Memory-TS now uses `node:sqlite` and no longer needs this override.
 
 ### Future Migration: @xenova/transformers → @huggingface/transformers
 
@@ -102,5 +86,5 @@ The official successor to `@xenova/transformers` is `@huggingface/transformers` 
 
 | Project | Warning Source | Status |
 |---------|---------------|--------|
-| Super-Memory-TS | better-sqlite3 | Cannot fix without better-sqlite3 update |
+| Super-Memory-TS | node:sqlite (built-in) | ✅ Fixed (node:sqlite has no prebuild-install) |
 | boomerang-v2 | @xenova/transformers → sharp@0.32 | **Fix: Migrate to @huggingface/transformers@4.x** |
