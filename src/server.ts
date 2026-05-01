@@ -810,17 +810,8 @@ export class SuperMemoryServer {
     // Create MCP transport early so we can connect even if memory init fails
     const transport = new StdioServerTransport();
 
-    // Add transport error/close handlers that log but don't crash
-    // Note: StdioServerTransport extends EventEmitter but types may not reflect this
-    const transportWithHandlers = transport as StdioServerTransport & {
-      on(event: 'error' | 'close', handler: (err?: Error) => void): void;
-    };
-    transportWithHandlers.on('error', (error) => {
-      logger.error('MCP transport error', { error: error instanceof Error ? error.message : String(error) });
-    });
-    transportWithHandlers.on('close', () => {
-      logger.warn('MCP transport closed');
-    });
+    // Transport error/close handlers are not supported by StdioServerTransport
+    // The transport manages its own lifecycle internally
 
     try {
       // Connect MCP transport BEFORE memory initialization

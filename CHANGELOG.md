@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.4.1] - 2026-05-01
+
+### Fixed
+- **Critical transport bug**: Removed `.on()` calls on `StdioServerTransport` which was throwing `TypeError: transportWithHandlers.on is not a function` and preventing MCP transport from connecting. This was the root cause of the 3000ms timeout — the server could never announce itself to the MCP client.
+
 ## [2.4.0] - 2026-05-01
 
 ### Changed
