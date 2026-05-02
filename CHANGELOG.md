@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.5.0] - 2026-05-01
+
+### Changed
+- **Replaced `glob` with `node:fs/promises.glob`** — Node 22+ built-in, removes ~20KB dependency
+- **Centralized ignore patterns** — New `src/project-index/constants.ts`
+- **Node 22+ engine requirement** already enforced (was >=22.5.0)
+
+### Fixed
+- Fixed always-false condition in `indexer.ts` gitignore pattern parsing
+
+### Removed
+- `glob` dependency
+- `@types/bun` devDependency
+- Various unused exports from hash.ts, embeddings.ts, memory/search.ts
+
 ## [2.4.3] - 2026-05-01
 
 ### Fixed

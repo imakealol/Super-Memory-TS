@@ -1,8 +1,9 @@
 import createXXHash64 from 'xxhash-wasm';
-import { promises as fs, statSync } from 'fs';
+import { promises as fs, statSync, type Dirent } from 'node:fs';
+import { glob } from 'node:fs/promises';
 import { resolve, relative } from 'path';
-import { glob } from 'glob';
 import { loadGitignorePatterns } from './indexer.js';
+import { ALWAYS_EXCLUDED_PATTERNS } from './constants.js';
 
 interface SnapshotEntry {
   hash: string;        // xxhash64 hex
@@ -66,37 +67,32 @@ export class SnapshotIndex {
   async scan(): Promise<FileDelta> {
     // Load .gitignore patterns and combine with hardcoded patterns
     const gitignorePatterns = loadGitignorePatterns(this.rootPath);
+    const excludePatterns = [...ALWAYS_EXCLUDED_PATTERNS, ...gitignorePatterns];
 
-    // Expanded hardcoded ignore patterns
-    const hardcodedIgnore = [
-      // Existing patterns
-      'node_modules/**', '.git/**', 'dist/**', '*.log', '.DS_Store',
-      '**/*.db', '**/*.har', '**/*.tmp', '**/*.log',
-      // Python virtual environments
-      '**/.venv/**', '**/venv/**', '**/.tox/**', '**/.pytest_cache/**',
-      '**/.mypy_cache/**', '**/.nox/**', '**/.hypothesis/**', '**/.eggs/**',
-      '**/.egg-info/**', '**/site-packages/**', '**/vendor/**', '**/bower_components/**',
-      // JS/TS build outputs
-      '**/.next/**', '**/.nuxt/**', '**/out/**', '**/.svelte-kit/**',
-      // Rust
-      '**/target/**',
-      // Java/Android/Gradle
-      '**/.gradle/**', '**/.idea/**', '**/.vscode/**', '**/.vs/**',
-      '**/bin/**', '**/obj/**',
-      // Other
-      '**/.cache/**', '**/coverage/**', '**/.parcel-cache/**',
-      '**/__pycache__/**', '**/*.pyc', '**/*.pyo', '**/*.pyd',
-      '**/.bash_history', '**/.Xauthority', '**/.ICEauthority',
-      '**/.viminfo', '**/.socket', '**/*.sock',
-    ];
+    // Helper to check if path matches any exclude pattern
+    const isExcluded = (path: string | Dirent): boolean => {
+      const filePath = typeof path === 'string' ? path : path.name;
+      return excludePatterns.some(pattern => {
+        // Convert glob pattern to regex-like check
+        const regexPattern = pattern
+          .replace(/\*\*/g, '.*')
+          .replace(/\*/g, '[^/]*')
+          .replace(/\?/g, '.');
+        return new RegExp('^' + regexPattern + '$').test(filePath);
+      });
+    };
 
-    // Glob all files respecting exclude patterns
-    const allFiles = await glob('**/*', {
+    // Glob all files respecting exclude patterns - node:fs/promises.glob returns async iterable
+    const allFiles: string[] = [];
+    for await (const file of glob('**/*', {
       cwd: this.rootPath,
-      absolute: true,
-      nodir: true,
-      ignore: [...hardcodedIgnore, ...gitignorePatterns]
-    });
+      withFileTypes: false,
+      exclude: isExcluded as (file: string | Dirent<string>) => boolean,
+    })) {
+      // Convert relative path to absolute
+      const absolutePath = resolve(this.rootPath, file as string);
+      allFiles.push(absolutePath);
+    }
     
     const currentPaths = new Set<string>();
     const delta: FileDelta = { new: [], changed: [], deleted: [], unchanged: [] };

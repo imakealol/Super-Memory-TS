@@ -29,8 +29,6 @@ export {
 // Search layer
 export {
   MemorySearch,
-  getSearch,
-  initializeSearch,
 } from './search.js';
 
 // Import for local use (in MemorySystem class)
@@ -210,13 +208,6 @@ export class MemorySystem {
 
     return this.db.contentExists(hash);
   }
-}
-
-/**
- * Create a new MemorySystem instance
- */
-export function createMemorySystem(): MemorySystem {
-  return new MemorySystem();
 }
 
 /**

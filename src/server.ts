@@ -232,13 +232,6 @@ export class SuperMemoryServer {
   }
 
   /**
-   * Get initialization error if any
-   */
-  getInitError(): Error | null {
-    return this.initError;
-  }
-
-  /**
    * Map source type to internal format
    */
   private mapSourceType(input: string): MemorySourceType {

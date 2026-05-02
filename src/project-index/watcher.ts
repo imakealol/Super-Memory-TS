@@ -11,74 +11,9 @@ import { join } from 'path';
 import { logger } from '../utils/logger.js';
 import type { FileEvent, WatcherConfig } from './types.js';
 import { loadGitignorePatterns } from './indexer.js';
+import { ALWAYS_EXCLUDED_PATTERNS } from './constants.js';
 
 // Default watcher configuration
-const DEFAULT_CONFIG: Required<Pick<WatcherConfig, 'debounceMs' | 'ignoreHidden' | 'ignoreInitial'>> = {
-  debounceMs: 500,
-  ignoreHidden: true,
-  ignoreInitial: false,
-};
-
-// Patterns that are always excluded
-const ALWAYS_EXCLUDED = [
-  // Existing patterns
-  '**/node_modules/**',
-  '**/.git/**',
-  '**/dist/**',
-  '**/.cache/**',
-  '**/coverage/**',
-  '**/*.log',
-  '**/.DS_Store',
-  '**/.bash_history',
-  '**/.Xauthority',
-  '**/.ICEauthority',
-  '**/.viminfo',
-  // Socket files
-  '**/.socket',
-  '**/*.sock',
-  // Skip files starting with . and common system files
-  '**/.*',
-  // Python virtual environments and tooling
-  '**/.venv/**',
-  '**/venv/**',
-  '**/.tox/**',
-  '**/.pytest_cache/**',
-  '**/.mypy_cache/**',
-  '**/.nox/**',
-  '**/.hypothesis/**',
-  '**/.eggs/**',
-  '**/.egg-info/**',
-  '**/site-packages/**',
-  '**/vendor/**',
-  '**/bower_components/**',
-  // JS/TS frameworks and build outputs
-  '**/.next/**',
-  '**/.nuxt/**',
-  '**/out/**',
-  '**/.svelte-kit/**',
-  '**/.parcel-cache/**',
-  // Rust build outputs
-  '**/target/**',
-  // Java/Android/IDE
-  '**/.gradle/**',
-  '**/.idea/**',
-  '**/.vscode/**',
-  '**/.vs/**',
-  '**/bin/**',
-  '**/obj/**',
-  // Python compiled/generated
-  '**/__pycache__/**',
-  '**/*.pyc',
-  '**/*.pyo',
-  '**/*.pyd',
-  // Other compiled binaries
-  '**/*.so',
-  '**/*.dll',
-  '**/*.dylib',
-  '**/*.class',
-  '**/*.o',
-  '**/*.a',
-];
 
 /**
  * ProjectWatcher - monitors project files for changes
@@ -109,12 +44,12 @@ export class ProjectWatcher extends EventEmitter {
         : ['**/*'],
       excludePatterns: [
         ...gitignorePatterns,
-        ...ALWAYS_EXCLUDED,
+        ...ALWAYS_EXCLUDED_PATTERNS,
         ...config.excludePatterns,
       ],
-      debounceMs: config.debounceMs ?? DEFAULT_CONFIG.debounceMs,
-      ignoreHidden: config.ignoreHidden ?? DEFAULT_CONFIG.ignoreHidden,
-      ignoreInitial: config.ignoreInitial ?? DEFAULT_CONFIG.ignoreInitial,
+      debounceMs: config.debounceMs ?? 500,
+      ignoreHidden: config.ignoreHidden ?? true,
+      ignoreInitial: config.ignoreInitial ?? false,
     };
   }
   

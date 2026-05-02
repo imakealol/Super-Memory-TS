@@ -1,6 +1,6 @@
 {
   "name": "@veedubin/super-memory-ts",
-  "version": "2.4.3",
+  "version": "2.5.0",
   "description": "Super-Memory MCP server with local embeddings and vector search",
   "license": "MIT",
   "repository": {
@@ -42,12 +42,10 @@
     "@xenova/transformers": "^2.0.1",
     "chokidar": "^4.0.0",
     "fuse.js": "^7.0.0",
-    "glob": "^13.0.6",
     "xxhash-wasm": "^1.1.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/bun": "^1.1.0",
     "@types/node": "^22.5.0",
     "@typescript-eslint/eslint-plugin": "^8.59.0",
     "@typescript-eslint/parser": "^8.59.0",

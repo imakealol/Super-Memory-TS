@@ -22,6 +22,7 @@ import { MemoryDatabase, getDatabase, type MemoryEntryInput } from '../memory/da
 import { FileTracker } from './file-tracker.js';
 import { SnapshotIndex } from './snapshot.js';
 import { PauseController } from './pause-controller.js';
+import { ALWAYS_EXCLUDED_PATTERNS } from './constants.js';
 import type {
   ProjectIndexConfig,
   ProjectIndexConfigInternal,
@@ -156,7 +157,8 @@ export function loadGitignorePatterns(rootPath: string): string[] {
       }
 
       // Skip anchored patterns (they're project-specific)
-      if (pattern.startsWith('/') && !pattern.startsWith('/')) continue;
+      // Only skip root-anchored patterns like /foo but not globstar patterns like /**
+      if (pattern.startsWith('/') && !pattern.startsWith('/**')) continue;
 
       // Skip trailing slashes (directories) - we'll handle directory matching via SKIP_DIRS
       if (pattern.endsWith('/')) continue;
@@ -240,11 +242,7 @@ export class ProjectIndexer extends EventEmitter {
         ? config.includePatterns 
         : ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.py', '**/*.md'],
       excludePatterns: [
-        '**/node_modules/**',
-        '**/.git/**',
-        '**/dist/**',
-        '**/*.log',
-        '**/.cache/**',
+        ...ALWAYS_EXCLUDED_PATTERNS,
         ...(config.excludePatterns || []),
       ],
       maxFileSize: config.maxFileSize || 1024 * 1024,

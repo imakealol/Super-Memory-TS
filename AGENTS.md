@@ -4,7 +4,7 @@
 **Package**: `@veedubin/super-memory-ts`  
 **Repository**: https://github.com/Veedubin/Super-Memory-TS  
 **License**: MIT  
-**Current Version**: v2.4.0
+**Current Version**: v2.5.0
 
 ---
 
@@ -14,7 +14,7 @@ This project provides a local-first semantic memory system with project isolatio
 
 ---
 
-## Architecture (v2.4.0)
+## Architecture (v2.5.0)
 
 | Component | Technology | Notes |
 |-----------|------------|-------|
@@ -138,6 +138,8 @@ export BOOMERANG_PROJECT_ID=my-project   # optional, for project isolation
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **v2.5.0** | 2026-05-01 | Code audit cleanup release. Removed glob (→ fs.promises.glob), @types/bun. Fixed always-false condition in indexer.ts. Centralized ignore patterns. |
+| **v2.4.3** | 2026-05-01 | Code audit & cleanup. Removed glob (→ fs.promises.glob), @types/bun. Fixed always-false condition in indexer.ts. Centralized ignore patterns in constants.ts. DRY refactoring. |
 | **v2.3.7** | 2026-04-29 | Connection resilience: start when Qdrant down, retry logic, `get_status` tool |
 | **v2.2.2** | 2026-04-27 | Custom path indexing via `index_project` tool, tiered search documentation |
 | **v2.2.1** | 2026-04-26 | MCP connection fix, Qdrant filter bug fix |
@@ -154,7 +156,7 @@ export BOOMERANG_PROJECT_ID=my-project   # optional, for project isolation
 ## Downstream Dependencies
 
 ### boomerang-v2
-- **Package**: `@veedubin/boomerang-v2` v3.1.0
+- **Package**: `@veedubin/boomerang-v2` v3.2.0
 - **Usage**: Direct imports from `dist/memory/` and `dist/project-index/`
 - **Import pattern**: `import { ... } from '@veedubin/super-memory-ts/dist/memory/database.js'`
 - **Requirement**: Package must include `dist/` directory with all subdirectories

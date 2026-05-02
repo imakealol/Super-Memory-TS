@@ -9,7 +9,6 @@ import Fuse, { type IFuseOptions } from 'fuse.js';
 import {
   MemoryDatabase,
   getDatabase,
-  initializeDatabase,
 } from './database.js';
 import {
   type MemoryEntry,
@@ -269,29 +268,4 @@ export class MemorySearch {
 
     return this.searchWithVector(memory.vector, options);
   }
-}
-
-/**
- * Default search instance
- */
-let defaultSearch: MemorySearch | null = null;
-
-/**
- * Get the default search instance
- */
-export function getSearch(db?: MemoryDatabase): MemorySearch {
-  if (!defaultSearch) {
-    defaultSearch = new MemorySearch(db);
-  }
-  return defaultSearch;
-}
-
-/**
- * Initialize search with database
- */
-export async function initializeSearch(dbUri?: string): Promise<MemorySearch> {
-  await initializeDatabase(dbUri);
-  defaultSearch = new MemorySearch(getDatabase(dbUri));
-  await defaultSearch.refreshIndex();
-  return defaultSearch;
 }
