@@ -5,8 +5,8 @@
   },
   "model": {
     "precision": "fp16",
-    "device": "auto",
-    "useGpu": false,
+    "device": "gpu",
+    "useGpu": true,
     "embeddingDim": 1024,
     "batchSize": 32
   },
