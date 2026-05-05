@@ -625,6 +625,32 @@ Settings are merged in the following order (highest to lowest):
 | `BOOMERANG_MAX_FILE_SIZE` | `10485760` | Max file size (bytes) to index |
 | `BOOMERANG_PROJECT_ID` | - | Project identifier for memory isolation |
 | `BOOMERANG_SEARCH_STRATEGY` | `tiered` | Default search strategy: `tiered`, `parallel` |
+| `QUERY_COLLECTIONS` | `tableName` | Comma-separated list of collections to search (for multi-collection RRF) |
+
+### Multi-Collection Search with RRF
+
+When you need to search across multiple Qdrant collections (e.g., during model migration from MiniLM 384-dim to BGE-Large 1024-dim), use `QUERY_COLLECTIONS`:
+
+```bash
+# Search both old (384-dim) and new (1024-dim) collections
+export QUERY_COLLECTIONS="memories,memories_bge_fp16"
+
+# Or in JSON config
+{
+  "database": {
+    "qdrantUrl": "http://localhost:6333",
+    "tableName": "memories",
+    "queryCollections": ["memories", "memories_bge_fp16"]
+  }
+}
+```
+
+**How it works:**
+1. **Write target**: `tableName` (`memories`) remains the target for all writes
+2. **Search target**: `queryCollections` defines which collections to search
+3. **RRF merge**: Results from all collections are merged using Reciprocal Rank Fusion (k=60)
+4. **Dimension validation**: Collections with mismatched dimensions are skipped with a warning
+5. **Fallback**: If any collection fails, search continues with remaining collections
 
 ---
 

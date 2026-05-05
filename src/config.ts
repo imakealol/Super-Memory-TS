@@ -38,6 +38,8 @@ export interface DatabaseConfig {
   tableName: string;
   /** Project ID for multi-tenant isolation */
   projectId?: string;
+  /** Collections to search (comma-separated in env). Defaults to [tableName] */
+  queryCollections?: string[];
 }
 
 export interface IndexerConfig {
@@ -212,6 +214,7 @@ export const ENV_VARS = {
   BOOMERANG_YIELD_MS: 'BOOMERANG_YIELD_MS',
   BOOMERANG_PROJECT_ID: 'BOOMERANG_PROJECT_ID',
   SUPER_MEMORY_EAGER_LOAD: 'SUPER_MEMORY_EAGER_LOAD',
+  QUERY_COLLECTIONS: 'QUERY_COLLECTIONS',
 } as const;
 
 // ==================== Validation ====================
@@ -312,6 +315,15 @@ function parseBoolean(value: string | undefined, defaultValue: boolean): boolean
   return value.toLowerCase() === 'true';
 }
 
+/**
+ * Parse QUERY_COLLECTIONS env var (comma-separated list)
+ */
+function parseQueryCollections(value: string | undefined): string[] | undefined {
+  if (!value) return undefined;
+  const collections = value.split(',').map(c => c.trim()).filter(Boolean);
+  return collections.length > 0 ? collections : undefined;
+}
+
 function parseEnvConfig(): Partial<Config> {
   return {
     model: {
@@ -325,6 +337,7 @@ function parseEnvConfig(): Partial<Config> {
       qdrantUrl: process.env[ENV_VARS.QDRANT_URL] || process.env[ENV_VARS.BOOMERANG_DB_PATH] || DEFAULT_CONFIG.database.qdrantUrl,
       tableName: DEFAULT_CONFIG.database.tableName,
       projectId: generateProjectId(),
+      queryCollections: parseQueryCollections(process.env[ENV_VARS.QUERY_COLLECTIONS]),
     },
     indexer: {
       chunkSize: parseInt(process.env[ENV_VARS.BOOMERANG_CHUNK_SIZE] || '', 10) || DEFAULT_CONFIG.indexer.chunkSize,
@@ -370,6 +383,7 @@ async function loadJsonConfig(configPath: string): Promise<Partial<Config>> {
         qdrantUrl: json.database.qdrantUrl || json.database.dbPath || DEFAULT_CONFIG.database.qdrantUrl,
         tableName: json.database.tableName || DEFAULT_CONFIG.database.tableName,
         projectId: json.database.projectId || DEFAULT_CONFIG.database.projectId,
+        queryCollections: parseQueryCollections(json.database.queryCollections),
       } : undefined,
       indexer: json.indexer ? {
         chunkSize: json.indexer.chunkSize || DEFAULT_CONFIG.indexer.chunkSize,

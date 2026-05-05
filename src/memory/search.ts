@@ -150,14 +150,15 @@ export class MemorySearch {
    */
   private async vectorOnlySearch(
     question: string,
-    options: Required<SearchOptions>
+    options: Required<SearchOptions>,
+    collectionName?: string
   ): Promise<MemoryEntry[]> {
     // Generate embedding for the question
     const embeddingResults = await generateEmbeddings([question]);
     const queryVector = new Float32Array(embeddingResults[0].embedding);
 
     // Query database with vector
-    return this.db.queryMemories(queryVector, options);
+    return this.db.queryMemories(queryVector, options, collectionName);
   }
 
   /**

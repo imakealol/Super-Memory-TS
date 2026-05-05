@@ -426,10 +426,12 @@ export class MemoryDatabase {
 
   /**
    * Query memories by vector similarity
+   * @param collectionName Optional collection name (defaults to MEMORY_TABLE_NAME)
    */
   async queryMemories(
     vector: Float32Array | number[],
-    options: SearchOptions = {}
+    options: SearchOptions = {},
+    collectionName: string = MEMORY_TABLE_NAME
   ): Promise<MemoryEntry[]> {
     const opts = { ...DEFAULT_SEARCH_OPTIONS, ...options };
     const topK = Math.min(opts.topK ?? 5, 20);
@@ -457,7 +459,7 @@ export class MemoryDatabase {
 
     const filter = conditions.length === 0 ? undefined : { must: conditions };
 
-    const results = await withRetry(() => this.client.search(MEMORY_TABLE_NAME, {
+    const results = await withRetry(() => this.client.search(collectionName, {
       vector: queryVector,
       limit: topK * 2,
       filter,
@@ -482,6 +484,35 @@ export class MemoryDatabase {
     }
 
     return deduped;
+  }
+
+  /**
+   * Get the vector dimension of a collection
+   */
+  async getCollectionDimension(collectionName: string): Promise<number | null> {
+    try {
+      const info = await withRetry(() => this.client.getCollection(collectionName), this.qdrantUrl);
+      // Handle both simple vectors (size: number) and named vectors (vectors: Record<string, {...}>)
+      const vectors = info.config?.params?.vectors;
+      if (typeof vectors === 'object' && vectors !== null) {
+        if (typeof vectors === 'number') {
+          return vectors;
+        }
+        // Named vectors - get size from 'default' or first entry
+        if ('default' in vectors) {
+          return (vectors.default as { size?: number })?.size ?? null;
+        }
+        // For other named vectors, cast to access by key
+        const namedVectors = vectors as Record<string, { size?: number }>;
+        const firstKey = Object.keys(namedVectors)[0];
+        if (firstKey) {
+          return namedVectors[firstKey]?.size ?? null;
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   /**

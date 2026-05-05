@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.6.0] - 2026-05-05
+
+### Added
+- **Multi-collection search with RRF**: Search across multiple Qdrant collections using `QUERY_COLLECTIONS` env var. Results merged via Reciprocal Rank Fusion (k=60) for unified ranking across collections with different embedding dimensions.
+- **Dimension validation**: Automatically skips collections with mismatched embedding dimensions during search, logging a warning.
+- **Graceful degradation**: Failed collections (not found, wrong dimensions, network errors) are logged and skipped rather than crashing the query.
+- **10 comprehensive tests** for multi-collection RRF search, deduplication, failure handling, and backward compatibility.
+
+### Changed
+- `MemorySystem.queryMemories()` now routes to multi-collection path when `queryCollections.length > 1`.
+- `MemoryDatabase.queryMemories()` accepts optional `collectionName` parameter.
+- `MemorySearch.vectorOnlySearch()` accepts optional `collectionName` parameter.
+- `getMemorySystem()` accepts `queryCollections` in config.
+- `SuperMemoryServer` passes `queryCollections` from config to `getMemorySystem()`.
+
+### How to Use
+```bash
+export QUERY_COLLECTIONS="memories_bge_fp16,memories"
+```
+- `COLLECTION_NAME` (or default `memories`) controls **writes**.
+- `QUERY_COLLECTIONS` controls **reads** (searches all listed collections).
+- If `QUERY_COLLECTIONS` is not set, falls back to single collection (backward compatible).
+
 ## [2.5.1] - 2026-05-04
 
 ### Fixed

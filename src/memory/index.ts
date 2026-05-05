@@ -34,7 +34,9 @@ export {
 // Import for local use (in MemorySystem class)
 import { MemoryDatabase } from './database.js';
 import { MemorySearch } from './search.js';
-import type { MemoryEntry, MemoryEntryInput, SearchOptions } from './schema.js';
+import { MEMORY_TABLE_NAME, type MemoryEntry, type MemoryEntryInput, type SearchOptions } from './schema.js';
+import { generateEmbeddings } from '../model/embeddings.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * Options for memory initialization
@@ -56,11 +58,14 @@ export class MemorySystem {
   private initializing: boolean = false;
   private initPromise: Promise<void> | null = null;
   private projectId?: string;
+  /** Collections to search. Defaults to [MEMORY_TABLE_NAME] for backward compatibility */
+  private queryCollections: string[];
 
-  constructor(db?: MemoryDatabase, search?: MemorySearch, config?: { dbUri?: string; projectId?: string }) {
+  constructor(db?: MemoryDatabase, search?: MemorySearch, config?: { dbUri?: string; projectId?: string; queryCollections?: string[] }) {
     this.db = db ?? new MemoryDatabase(config?.dbUri, config?.projectId);
     this.search = search ?? new MemorySearch(this.db);
     this.projectId = config?.projectId;
+    this.queryCollections = config?.queryCollections ?? [MEMORY_TABLE_NAME];
   }
 
   /**
@@ -146,12 +151,88 @@ export class MemorySystem {
 
   /**
    * Query memories using search strategies
+   * When multiple collections are configured, uses RRF to merge results
    */
   async queryMemories(
     question: string,
     options?: SearchOptions
   ): Promise<MemoryEntry[]> {
-    return this.search.query(question, options);
+    // Single collection - use existing search
+    if (this.queryCollections.length === 1) {
+      return this.search.query(question, options);
+    }
+
+    // Multiple collections - RRF merge
+    return this.queryMultiCollection(question, options ?? {});
+  }
+
+  /**
+   * Query across multiple collections using Reciprocal Rank Fusion (RRF)
+   */
+  private async queryMultiCollection(
+    question: string,
+    options: SearchOptions
+  ): Promise<MemoryEntry[]> {
+    const limit = options.topK ?? 5;
+    const k = 60; // RRF constant
+    const currentDim = await this.getCurrentEmbeddingDimension();
+
+    // Generate embedding once
+    const embeddingResults = await generateEmbeddings([question]);
+    const queryVector = new Float32Array(embeddingResults[0].embedding);
+
+    // Search all collections in parallel
+    const searches = this.queryCollections.map(async collection => {
+      try {
+        // Validate dimension match
+        if (currentDim !== null) {
+          const collectionDim = await this.db.getCollectionDimension(collection);
+          if (collectionDim !== null && collectionDim !== currentDim) {
+            logger.warn(`Collection ${collection} dimension mismatch (${collectionDim} vs ${currentDim}), skipping`);
+            return [];
+          }
+        }
+        // Fetch more results per collection for RRF
+        const results = await this.db.queryMemories(queryVector, { ...options, topK: limit * 2 }, collection);
+        return results;
+      } catch (err) {
+        logger.warn(`Collection ${collection} search failed, skipping`, { error: err instanceof Error ? err.message : String(err) });
+        return [];
+      }
+    });
+
+    const results = await Promise.all(searches);
+
+    // RRF merge
+    const scores = new Map<string, number>();
+    const entries = new Map<string, MemoryEntry>();
+
+    for (const collectionResults of results) {
+      for (let rank = 0; rank < collectionResults.length; rank++) {
+        const memory = collectionResults[rank];
+        const rrfScore = 1.0 / (k + rank + 1);
+        scores.set(memory.id, (scores.get(memory.id) || 0) + rrfScore);
+        entries.set(memory.id, memory);
+      }
+    }
+
+    return Array.from(scores.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit)
+      .map(([id]) => entries.get(id)!)
+      .filter(Boolean);
+  }
+
+  /**
+   * Get current embedding dimension from model manager
+   */
+  private async getCurrentEmbeddingDimension(): Promise<number> {
+    try {
+      const { ModelManager } = await import('../model/index.js');
+      return ModelManager.getInstance().getDimensions();
+    } catch {
+      return 1024; // Default fallback
+    }
   }
 
   /**
@@ -211,7 +292,7 @@ let defaultMemorySystem: MemorySystem | null = null;
 /**
  * Get the default memory system instance
  */
-export function getMemorySystem(config?: { dbUri?: string; projectId?: string }): MemorySystem {
+export function getMemorySystem(config?: { dbUri?: string; projectId?: string; queryCollections?: string[] }): MemorySystem {
   if (!defaultMemorySystem) {
     defaultMemorySystem = new MemorySystem(undefined, undefined, config);
   }

@@ -195,6 +195,7 @@ export class SuperMemoryServer {
       memory: getMemorySystem({ 
         dbUri: this.config.database.qdrantUrl || this.config.database.dbPath,
         projectId,
+        queryCollections: this.config.database.queryCollections,
       }),
       indexer: null,
     };
