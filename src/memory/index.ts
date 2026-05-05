@@ -124,11 +124,8 @@ export class MemorySystem {
    * Add a memory entry
    */
   async addMemory(input: MemoryEntryInput): Promise<string> {
-    console.error('[MemorySystem.addMemory] input:', JSON.stringify({ text: input.text, sourceType: input.sourceType, sourcePath: input.sourcePath }));
     const id = await this.db.addMemory(input);
-    console.error('[MemorySystem.addMemory] db.addMemory completed, id:', id);
     await this.search.refreshIndex();
-    console.error('[MemorySystem.addMemory] refreshIndex completed');
     return id;
   }
 
@@ -196,15 +193,11 @@ export class MemorySystem {
    * Check if content already exists
    */
   async contentExists(text: string): Promise<boolean> {
-    console.error('[MemorySystem.contentExists] text:', text);
     const encoder = new TextEncoder();
     const data = encoder.encode(text);
-    console.error('[MemorySystem.contentExists] data encoded, calling crypto.subtle.digest');
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    console.error('[MemorySystem.contentExists] digest completed');
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-    console.error('[MemorySystem.contentExists] hash:', hash);
 
     return this.db.contentExists(hash);
   }

@@ -12,12 +12,20 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import { loadConfigSync, validateConfig, type Config } from './config.js';
 import { ModelManager } from './model/index.js';
 import { MemorySystem, getMemorySystem } from './memory/index.js';
 import { ProjectIndexer } from './project-index/indexer.js';
 import { logger } from './utils/logger.js';
 import type { SearchOptions, SearchStrategy, MemorySourceType } from './memory/schema.js';
+
+// Read version from package.json
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const pkgPath = join(__dirname, '..', '..', 'package.json');
+const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
 
 // ==================== Job Tracking ====================
 
@@ -194,7 +202,7 @@ export class SuperMemoryServer {
     // Create MCP server
     this.server = new McpServer({
       name: 'super-memory',
-      version: '2.1.0',
+      version: pkg.version,
     });
 
     this.registerTools();
@@ -318,11 +326,11 @@ export class SuperMemoryServer {
         inputSchema: {
           query: z.string().min(1).describe('The search query to find relevant memories'),
           limit: z.number().int().min(1).max(100).default(10).describe('Maximum number of results'),
-          strategy: z.enum(['tiered', 'vector_only', 'text_only']).default('tiered').describe('Search strategy'),
+          strategy: z.enum(['tiered', 'vector_only', 'text_only', 'parallel']).default('tiered').describe('Search strategy'),
         },
         annotations: { readOnlyHint: true },
       },
-      async ({ query, limit, strategy }: { query: string; limit: number; strategy: 'tiered' | 'vector_only' | 'text_only' }) => {
+      async ({ query, limit, strategy }: { query: string; limit: number; strategy: 'tiered' | 'vector_only' | 'text_only' | 'parallel' }) => {
         try {
           // Ensure memory is ready before operation
           this.ensureMemoryReady();
@@ -332,6 +340,7 @@ export class SuperMemoryServer {
             'tiered': 'TIERED',
             'vector_only': 'VECTOR_ONLY',
             'text_only': 'TEXT_ONLY',
+            'parallel': 'PARALLEL',
           };
           const internalStrategy = strategyMap[strategy] || 'TIERED';
 
@@ -413,14 +422,12 @@ export class SuperMemoryServer {
             metadataJson: metadata ? JSON.stringify(metadata) : undefined,
           };
 
-          console.error('[add_memory handler] Calling addMemory with input:', JSON.stringify({ text: input.text, sourceType: input.sourceType, sourcePath: input.sourcePath }));
           // Wrap addMemory with 30s timeout to prevent hanging
           const id = await withTimeout(
             this.context.memory.addMemory(input),
             30000,
             'add_memory'
           );
-          console.error('[add_memory handler] addMemory returned id:', id);
 
           return {
             content: [{
@@ -433,8 +440,6 @@ export class SuperMemoryServer {
             }],
           };
         } catch (err) {
-          console.error('[add_memory handler] ERROR:', err);
-          console.error('[add_memory handler] Stack:', err instanceof Error ? err.stack : 'unknown');
           return {
             content: [{
               type: 'text' as const,

@@ -272,6 +272,8 @@ export class MemoryDatabase {
       await this.validateModelDimensions(embeddingDim);
       // Ensure project_id index exists for existing collections
       await this.ensureProjectIdIndex();
+      // Refresh model metadata for existing collections
+      await this.storeModelMetadata(modelManager.getMetadata().modelId, embeddingDim);
     }
 
     this.initialized = true;
@@ -354,24 +356,14 @@ export class MemoryDatabase {
     const contentHash = computeHash(input.text);
 
     let vector: number[];
-    try {
-      vector = input.vector?.length
-        ? Array.isArray(input.vector) ? input.vector : Array.from(input.vector)
-        : (await generateEmbeddings([input.text]))[0].embedding;
-    } catch (embErr) {
-      console.error('[DEBUG] Embedding generation failed:', embErr);
-      throw embErr;
+    if (input.vector?.length) {
+      vector = Array.isArray(input.vector) ? input.vector : Array.from(input.vector);
+    } else {
+      vector = (await generateEmbeddings([input.text]))[0].embedding;
     }
-
-    console.error('[DEBUG] addMemory vector dim:', vector.length, 'projectId:', this.projectId);
 
     const point = toPoint(id, vector, input, timestamp, contentHash, this.projectId);
-    try {
-      await withRetry(() => this.client.upsert(MEMORY_TABLE_NAME, { points: [point] }), this.qdrantUrl);
-    } catch (upsertErr) {
-      console.error('[DEBUG] Qdrant upsert failed:', upsertErr);
-      throw upsertErr;
-    }
+    await withRetry(() => this.client.upsert(MEMORY_TABLE_NAME, { points: [point] }), this.qdrantUrl);
 
     return id;
   }

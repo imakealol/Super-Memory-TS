@@ -46,7 +46,7 @@ export type MemoryEntryInput = Omit<MemoryEntry, 'id' | 'timestamp' | 'contentHa
 /**
  * Search strategy for querying memories
  */
-export type SearchStrategy = 'TIERED' | 'VECTOR_ONLY' | 'TEXT_ONLY';
+export type SearchStrategy = 'TIERED' | 'VECTOR_ONLY' | 'TEXT_ONLY' | 'PARALLEL';
 
 /**
  * Options for searching memories

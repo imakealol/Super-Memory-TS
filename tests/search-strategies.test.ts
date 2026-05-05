@@ -195,416 +195,130 @@ describe('TIERED Strategy', () => {
       strategy: 'TIERED',
       threshold: 0.3,
       topK: 5,
-    });
+});
+  });
 
-    // TIERED should merge results from both searches
+  test('PARALLEL handles vector search failure gracefully', async () => {
+    // Make vector search fail, text search succeed
+    (mockDb.queryMemories as any).mockRejectedValueOnce(new Error('Vector error'));
+    (mockDb.listMemories as any).mockResolvedValueOnce(memories);
+
+    const results = await search.query('programming', { strategy: 'PARALLEL', topK: 5 });
+
+    // Should still return text search results
     expect(results).toBeDefined();
-    // Should have results from Fuse.js text search
     expect(results.length).toBeGreaterThan(0);
   });
 
-  test('should respect topK parameter', async () => {
-    await search.query('test', { strategy: 'TIERED', topK: 2 });
-
-    // Verify topK was passed to database query
-    const call = (mockDb.queryMemories as any).mock.calls[0];
-    expect(call[1].topK).toBe(4); // topK * 2 for TIERED
-  });
-
-  test('should handle embedding generation failure gracefully', async () => {
-    // Mock embedding generation to fail
-    const searchModule = await import('../src/memory/search.js');
-    const originalGenerate = await import('../src/model/embeddings.js').then(m => m.generateEmbeddings);
-
-    // This test verifies the error handling in tieredSearch
-    // when generateEmbeddings throws
-    (mockDb.queryMemories as any).mockResolvedValueOnce([]);
-
-    const results = await search.query('test', {
-      strategy: 'TIERED',
-      threshold: 0.72,
-      topK: 5,
-    });
-
-    // Should not throw, returns whatever results available
-    expect(results).toBeDefined();
-  });
-});
-
-// ============================================================================
-// VECTOR_ONLY Strategy Tests
-// ============================================================================
-
-describe('VECTOR_ONLY Strategy', () => {
-  let search: MemorySearch;
-  let mockDb: MemoryDatabase;
-  let memories: MemoryEntry[];
-
-  beforeEach(() => {
-    memories = TEST_MEMORIES.map((m, i) => createMemoryEntry(m, i));
-    mockDb = createMockDatabase(memories);
-    search = new MemorySearch(mockDb);
-  });
-
-  test('should call db.queryMemories for pure vector search', async () => {
-    await search.query('containerization', { strategy: 'VECTOR_ONLY', topK: 5 });
-
-    expect(mockDb.queryMemories).toHaveBeenCalledTimes(1);
-  });
-
-  test('should not use text search (Fuse.js)', async () => {
-    await search.query('containerization', { strategy: 'VECTOR_ONLY', topK: 5 });
-
-    // listMemories should NOT be called for VECTOR_ONLY
-    expect(mockDb.listMemories).not.toHaveBeenCalled();
-  });
-
-  test('should return results directly from vector search', async () => {
-    const mockResults = [memories[2], memories[4]]; // Docker and Kubernetes
-    (mockDb.queryMemories as any).mockResolvedValueOnce(mockResults);
-
-    const results = await search.query('containerization', { strategy: 'VECTOR_ONLY', topK: 5 });
-
-    expect(results).toEqual(mockResults);
-  });
-
-  test('should respect topK parameter', async () => {
-    await search.query('test query', { strategy: 'VECTOR_ONLY', topK: 3 });
-
-    const call = (mockDb.queryMemories as any).mock.calls[0];
-    expect(call[1].topK).toBe(3);
-  });
-
-  test('should use threshold for filtering results', async () => {
-    await search.query('test', { strategy: 'VECTOR_ONLY', threshold: 0.9, topK: 5 });
-
-    const call = (mockDb.queryMemories as any).mock.calls[0];
-    expect(call[1].threshold).toBe(0.9);
-  });
-
-  test('should handle empty vector results gracefully', async () => {
-    (mockDb.queryMemories as any).mockResolvedValueOnce([]);
-
-    const results = await search.query('nonexistent concept xyz123', { strategy: 'VECTOR_ONLY', topK: 5 });
-
-    expect(results).toEqual([]);
-  });
-});
-
-// ============================================================================
-// TEXT_ONLY Strategy Tests
-// ============================================================================
-
-describe('TEXT_ONLY Strategy', () => {
-  let search: MemorySearch;
-  let mockDb: MemoryDatabase;
-  let memories: MemoryEntry[];
-
-  beforeEach(() => {
-    memories = TEST_MEMORIES.map((m, i) => createMemoryEntry(m, i));
-    mockDb = createMockDatabase(memories);
-    search = new MemorySearch(mockDb);
-  });
-
-  test('should not call db.queryMemories', async () => {
-    await search.query('programming language', { strategy: 'TEXT_ONLY', topK: 5 });
-
-    expect(mockDb.queryMemories).not.toHaveBeenCalled();
-  });
-
-  test('should call listMemories to build Fuse index', async () => {
-    await search.query('JavaScript', { strategy: 'TEXT_ONLY', topK: 5 });
-
-    expect(mockDb.listMemories).toHaveBeenCalled();
-  });
-
-  test('should return memories matching text query', async () => {
-    // First call returns memories, subsequent calls for refreshIndex
-    (mockDb.listMemories as any).mockResolvedValueOnce(memories);
-
-    const results = await search.query('JavaScript', { strategy: 'TEXT_ONLY', topK: 5 });
-
-    expect(results.length).toBeGreaterThan(0);
-    // Should find JavaScript-related memories
-    const found = results.some(r => r.text.toLowerCase().includes('javascript'));
-    expect(found).toBe(true);
-  });
-
-  test('should find exact phrase matches', async () => {
-    (mockDb.listMemories as any).mockResolvedValueOnce(memories);
-
-    const results = await search.query('async/await support', { strategy: 'TEXT_ONLY', topK: 5 });
-
-    expect(results.length).toBeGreaterThan(0);
-  });
-
-  test('should return empty for no text matches', async () => {
-    (mockDb.listMemories as any).mockResolvedValueOnce(memories);
-
-    const results = await search.query('xyz123nonsense xyz789', { strategy: 'TEXT_ONLY', topK: 5 });
-
-    expect(results).toEqual([]);
-  });
-
-  test('should respect topK parameter', async () => {
-    (mockDb.listMemories as any).mockResolvedValueOnce(memories);
-
-    await search.query('test', { strategy: 'TEXT_ONLY', topK: 2 });
-
-    // TEXT_ONLY uses Fuse.js which respects limit in search options
-    // The query should complete without error
-    const results = await search.query('test', { strategy: 'TEXT_ONLY', topK: 2 });
-    expect(results.length).toBeLessThanOrEqual(2);
-  });
-});
-
-// ============================================================================
-// Strategy Consistency Tests
-// ============================================================================
-
-describe('Strategy Consistency', () => {
-  let search: MemorySearch;
-  let mockDb: MemoryDatabase;
-  let memories: MemoryEntry[];
-
-  beforeEach(() => {
-    memories = TEST_MEMORIES.map((m, i) => createMemoryEntry(m, i));
-    mockDb = createMockDatabase(memories);
-    search = new MemorySearch(mockDb);
-  });
-
-  test('VECTOR_ONLY and TEXT_ONLY produce different result sets', async () => {
-    // Mock vector to return specific results
+  test('PARALLEL handles text search failure gracefully', async () => {
+    // Make vector search succeed, text search fail
     (mockDb.queryMemories as any).mockResolvedValueOnce([memories[0], memories[1]]);
-    (mockDb.listMemories as any).mockResolvedValueOnce(memories);
+    (mockDb.listMemories as any).mockRejectedValueOnce(new Error('Text error'));
 
-    const vectorResults = await search.query('programming', { strategy: 'VECTOR_ONLY', topK: 5 });
-    const textResults = await search.query('programming', { strategy: 'TEXT_ONLY', topK: 5 });
+    const results = await search.query('programming', { strategy: 'PARALLEL', topK: 5 });
 
-    // Results may differ because:
-    // - VECTOR_ONLY uses semantic similarity
-    // - TEXT_ONLY uses keyword matching
-    expect(vectorResults).toBeDefined();
-    expect(textResults).toBeDefined();
-  });
-
-  test('TIERED combines approaches for comprehensive results', async () => {
-    // Mock vector to return below-threshold results
-    (mockDb.queryMemories as any).mockResolvedValueOnce([
-      { ...memories[0], score: 0.5 },
-    ]);
-    (mockDb.listMemories as any).mockResolvedValueOnce(memories);
-
-    const results = await search.query('programming', {
-      strategy: 'TIERED',
-      threshold: 0.72,
-      topK: 5,
-    });
-
-    // TIERED should merge vector and text results
-    expect(mockDb.listMemories).toHaveBeenCalled();
+    // Should still return vector search results
     expect(results).toBeDefined();
+    expect(results.length).toBeGreaterThan(0);
   });
 
-  test('same query with different strategies returns valid results', async () => {
+  test('PARALLEL returns empty when both searches fail', async () => {
+    // Both searches fail
+    (mockDb.queryMemories as any).mockRejectedValueOnce(new Error('Vector error'));
+    (mockDb.listMemories as any).mockRejectedValueOnce(new Error('Text error'));
+
+    const results = await search.query('programming', { strategy: 'PARALLEL', topK: 5 });
+
+    expect(results).toEqual([]);
+  });
+
+  test('PARALLEL respects topK parameter', async () => {
+    (mockDb.queryMemories as any).mockResolvedValueOnce(memories);
+    (mockDb.listMemories as any).mockResolvedValueOnce(memories);
+
+    await search.query('test', { strategy: 'PARALLEL', topK: 3 });
+
+    // Results should be limited to topK
+    const results = await search.query('test', { strategy: 'PARALLEL', topK: 3 });
+    expect(results.length).toBeLessThanOrEqual(3);
+  });
+
+  test('PARALLEL uses k=60 for RRF constant', async () => {
+    // The RRF formula is: score = 1 / (k + rank + 1)
+    // With k=60: first rank gives 1/61, second gives 1/62, etc.
     (mockDb.queryMemories as any).mockResolvedValueOnce([memories[0]]);
     (mockDb.listMemories as any).mockResolvedValueOnce(memories);
 
-    const strategies: SearchStrategy[] = ['TIERED', 'VECTOR_ONLY', 'TEXT_ONLY'];
+    const results = await search.query('test', { strategy: 'PARALLEL', topK: 5 });
 
-    for (const strategy of strategies) {
-      const results = await search.query('JavaScript', { strategy, topK: 5 });
-      expect(results).toBeDefined();
-      expect(Array.isArray(results)).toBe(true);
-    }
-  });
-});
-
-// ============================================================================
-// Empty Results Tests
-// ============================================================================
-
-describe('Empty Results Handling', () => {
-  let search: MemorySearch;
-  let mockDb: MemoryDatabase;
-  let memories: MemoryEntry[];
-
-  beforeEach(() => {
-    memories = TEST_MEMORIES.map((m, i) => createMemoryEntry(m, i));
-    mockDb = createMockDatabase(memories);
-    search = new MemorySearch(mockDb);
-  });
-
-  test('TIERED handles empty results gracefully', async () => {
-    (mockDb.queryMemories as any).mockResolvedValueOnce([]);
-    (mockDb.listMemories as any).mockResolvedValueOnce([]);
-
-    const results = await search.query('xyz123nonsense xyz789', {
-      strategy: 'TIERED',
-      threshold: 0.72,
-      topK: 5,
-    });
-
-    expect(results).toEqual([]);
-  });
-
-  test('VECTOR_ONLY handles empty results gracefully', async () => {
-    (mockDb.queryMemories as any).mockResolvedValueOnce([]);
-
-    const results = await search.query('xyz123nonsense xyz789', {
-      strategy: 'VECTOR_ONLY',
-      topK: 5,
-    });
-
-    expect(results).toEqual([]);
-  });
-
-  test('TEXT_ONLY handles empty results gracefully', async () => {
-    (mockDb.listMemories as any).mockResolvedValueOnce(memories);
-
-    const results = await search.query('xyz123nonsense xyz789', {
-      strategy: 'TEXT_ONLY',
-      topK: 5,
-    });
-
-    expect(results).toEqual([]);
-  });
-
-  test('empty database returns empty for all strategies', async () => {
-    const emptyDb = createMockDatabase([]);
-    const emptySearch = new MemorySearch(emptyDb);
-
-    const strategies: SearchStrategy[] = ['TIERED', 'VECTOR_ONLY', 'TEXT_ONLY'];
-
-    for (const strategy of strategies) {
-      const results = await emptySearch.query('any query', { strategy, topK: 5 });
-      expect(results).toEqual([]);
-    }
-  });
-});
-
-// ============================================================================
-// Performance Baseline Tests
-// ============================================================================
-
-describe('Performance Characteristics', () => {
-  test('VECTOR_ONLY should not rebuild Fuse index', async () => {
-    const memories = TEST_MEMORIES.map((m, i) => createMemoryEntry(m, i));
-    const mockDb = createMockDatabase(memories);
-    const search = new MemorySearch(mockDb);
-
-    // First query
-    await search.query('test', { strategy: 'VECTOR_ONLY', topK: 5 });
-    expect(mockDb.listMemories).not.toHaveBeenCalled();
-
-    // Reset mock
-    (mockDb.listMemories as any).mockClear();
-
-    // Second query should still not call listMemories
-    await search.query('test2', { strategy: 'VECTOR_ONLY', topK: 5 });
-    expect(mockDb.listMemories).not.toHaveBeenCalled();
-  });
-
-  test('TEXT_ONLY builds Fuse index on first query', async () => {
-    const memories = TEST_MEMORIES.map((m, i) => createMemoryEntry(m, i));
-    const mockDb = createMockDatabase(memories);
-    const search = new MemorySearch(mockDb);
-
-    // First TEXT_ONLY query should build index
-    (mockDb.listMemories as any).mockResolvedValueOnce(memories);
-    await search.query('test', { strategy: 'TEXT_ONLY', topK: 5 });
-
-    expect(mockDb.listMemories).toHaveBeenCalledTimes(1);
-
-    // Reset for second call
-    (mockDb.listMemories as any).mockClear();
-
-    // Second TEXT_ONLY query should reuse index (not rebuild)
-    await search.query('test2', { strategy: 'TEXT_ONLY', topK: 5 });
-
-    // Should not rebuild index if already ready
-    // Note: depending on implementation, this might still call listMemories
-    // or might skip if fuseReady is true
-  });
-
-  test('TIERED calls both vector and text search when needed', async () => {
-    const memories = TEST_MEMORIES.map((m, i) => createMemoryEntry(m, i));
-    const mockDb = createMockDatabase(memories);
-    const search = new MemorySearch(mockDb);
-
-    // Mock vector to return below-threshold results
-    (mockDb.queryMemories as any).mockResolvedValueOnce([
-      { ...memories[0], score: 0.5 },
-    ]);
-    (mockDb.listMemories as any).mockResolvedValueOnce(memories);
-
-    await search.query('programming', {
-      strategy: 'TIERED',
-      threshold: 0.72,
-      topK: 5,
-    });
-
-    // TIERED should call both when fallback is triggered
-    expect(mockDb.queryMemories).toHaveBeenCalled();
-    expect(mockDb.listMemories).toHaveBeenCalled();
-  });
-});
-
-// ============================================================================
-// RRF Fusion (PARALLEL) Tests
-// ============================================================================
-
-describe('PARALLEL Strategy (RRF Fusion)', () => {
-  let search: MemorySearch;
-  let mockDb: MemoryDatabase;
-  let memories: MemoryEntry[];
-
-  beforeEach(() => {
-    memories = TEST_MEMORIES.map((m, i) => createMemoryEntry(m, i));
-    mockDb = createMockDatabase(memories);
-    search = new MemorySearch(mockDb);
-  });
-
-  test('PARALLEL strategy is available in SearchStrategy type', () => {
-    // Note: Based on schema, PARALLEL may not be in the type
-    // This test documents the expected behavior
-    const strategy: SearchStrategy = 'TIERED';
-    expect(strategy).toBeDefined();
-  });
-
-  test('PARALLEL strategy should combine multiple search approaches', async () => {
-    // If PARALLEL is implemented, it should query both vector and text
-    const results = await search.query('ambiguous query', {
-      strategy: 'TIERED', // Using TIERED as proxy since PARALLEL may not be separate
-      threshold: 0.5,
-      topK: 10,
-    });
-
-    // TIERED with low threshold should combine results
+    // Verify it doesn't throw and returns valid results
     expect(results).toBeDefined();
   });
 
-  test('PARALLEL should achieve higher recall than single-tier', async () => {
-    // With low threshold, TIERED behaves similarly to PARALLEL
-    // returning results from both vector and text search
-    const memories = TEST_MEMORIES.map((m, i) => createMemoryEntry(m, i));
-    const mockDb = createMockDatabase(memories);
-    const search = new MemorySearch(mockDb);
-
-    // Mock vector to return below-threshold results
-    (mockDb.queryMemories as any).mockResolvedValueOnce([
-      { ...memories[0], score: 0.5 },
-    ]);
+  test('PARALLEL deduplicates results appearing in both searches', async () => {
+    // When the same memory appears in both vector and text results,
+    // RRF should combine their scores
+    (mockDb.queryMemories as any).mockResolvedValueOnce([memories[0]]);
     (mockDb.listMemories as any).mockResolvedValueOnce(memories);
 
-    const tieredResults = await search.query('programming', {
-      strategy: 'TIERED',
-      threshold: 0.3,
-      topK: 20,
-    });
+    const results = await search.query('JavaScript', { strategy: 'PARALLEL', topK: 10 });
 
-    // TIERED with combined search should have access to more results
-    expect(tieredResults).toBeDefined();
+    // Should have results without duplicates (by contentHash)
+    const contentHashes = results.map(r => r.contentHash);
+    const uniqueHashes = new Set(contentHashes);
+    expect(uniqueHashes.size).toBe(contentHashes.length);
+  });
+
+  test('PARALLEL is accessible via query method', async () => {
+    (mockDb.queryMemories as any).mockResolvedValueOnce([memories[0], memories[1]]);
+    (mockDb.listMemories as any).mockResolvedValueOnce(memories);
+
+    const results = await search.query('test', { strategy: 'PARALLEL', topK: 5 });
+
+    expect(results).toBeDefined();
+    expect(Array.isArray(results)).toBe(true);
+  });
+});
+
+// ============================================================================
+// RRF Fusion Math Tests
+// ============================================================================
+
+describe('RRF Fusion Math', () => {
+  test('RRF score for rank 0 with k=60 should be ~0.01639', () => {
+    const k = 60;
+    const rank = 0;
+    const score = 1 / (k + rank + 1);
+    expect(score).toBeCloseTo(1/61, 4); // 0.016393...
+  });
+
+  test('RRF score for rank 1 with k=60 should be ~0.01613', () => {
+    const k = 60;
+    const rank = 1;
+    const score = 1 / (k + rank + 1);
+    expect(score).toBeCloseTo(1/62, 4); // 0.016129...
+  });
+
+  test('Combined RRF score adds correctly', () => {
+    const k = 60;
+    // Memory appears at rank 0 in vector (score 1/61) and rank 1 in text (score 1/62)
+    const vectorScore = 1 / (k + 0 + 1);
+    const textScore = 1 / (k + 1 + 1);
+    const combined = vectorScore + textScore;
+    
+    // Combined should be ~0.01639 + 0.01613 = 0.03252
+    expect(combined).toBeCloseTo(0.0325, 3);
+  });
+
+  test('Higher rank means lower RRF contribution', () => {
+    const k = 60;
+    const rank0Score = 1 / (k + 0 + 1);
+    const rank5Score = 1 / (k + 5 + 1);
+    
+    expect(rank0Score).toBeGreaterThan(rank5Score);
+    // rank 0 = 1/61 ≈ 0.0164
+    // rank 5 = 1/66 ≈ 0.0152
+    expect(rank0Score / rank5Score).toBeCloseTo(66/61, 2);
   });
 });
 

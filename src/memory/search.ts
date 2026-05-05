@@ -1,7 +1,7 @@
 /**
  * Memory Search Layer
  * 
- * Implements TIERED, VECTOR_ONLY, and TEXT_ONLY search strategies
+ * Implements TIERED, VECTOR_ONLY, TEXT_ONLY, and PARALLEL search strategies
  * using Qdrant for vector search and Fuse.js for text search.
  */
 
@@ -17,11 +17,6 @@ import {
 } from './schema.js';
 import { generateEmbeddings } from '../model/embeddings.js';
 import { logger } from '../utils/logger.js';
-
-/** Qdrant search result with similarity score */
-interface QdrantMemoryResult extends MemoryEntry {
-  _similarity?: number;
-}
 
 /**
  * Fuse.js configuration for text search
@@ -98,6 +93,8 @@ export class MemorySearch {
         return this.vectorOnlySearch(question, opts);
       case 'TEXT_ONLY':
         return this.textOnlySearch(question, opts);
+      case 'PARALLEL':
+        return this.parallelSearch(question, opts);
       case 'TIERED':
       default:
         return this.tieredSearch(question, opts);
@@ -132,7 +129,7 @@ export class MemorySearch {
 
     // If we have vector results and top score meets threshold, return them
     if (vectorResults.length > 0) {
-      const topScore = (vectorResults[0] as QdrantMemoryResult)._similarity ?? 0;
+      const topScore = vectorResults[0].score ?? 0;
       if (topScore >= threshold) {
         return vectorResults.slice(0, topK);
       }
@@ -231,6 +228,58 @@ export class MemorySearch {
     }
 
     return merged;
+  }
+
+  /**
+   * PARALLEL strategy: Run vector and text searches in parallel, fuse with RRF
+   *
+   * Algorithm:
+   * 1. Run vectorOnlySearch() and textSearchInternal() concurrently
+   * 2. Apply Reciprocal Rank Fusion (RRF) scoring to combine rankings
+   * 3. Return top results sorted by combined RRF score
+   */
+  private async parallelSearch(
+    question: string,
+    options: Required<SearchOptions>
+  ): Promise<MemoryEntry[]> {
+    const { topK } = options;
+    const k = 60; // RRF constant (standard value)
+
+    // Run both searches in parallel with graceful error handling
+    const [vectorResults, textResults] = await Promise.all([
+      this.vectorOnlySearch(question, options).catch(() => [] as MemoryEntry[]),
+      this.textSearchInternal(question, topK * 2).catch(() => [] as TextSearchResult[]),
+    ]);
+
+    // If both searches failed, return empty
+    if (vectorResults.length === 0 && textResults.length === 0) {
+      return [];
+    }
+
+    // Build combined RRF scores
+    const scores = new Map<string, number>();
+    const entries = new Map<string, MemoryEntry>();
+
+    // Score vector results
+    vectorResults.forEach((entry, rank) => {
+      const rrfScore = 1 / (k + rank + 1);
+      scores.set(entry.id, (scores.get(entry.id) || 0) + rrfScore);
+      entries.set(entry.id, entry);
+    });
+
+    // Score text results
+    textResults.forEach((result, rank) => {
+      const rrfScore = 1 / (k + rank + 1);
+      scores.set(result.entry.id, (scores.get(result.entry.id) || 0) + rrfScore);
+      entries.set(result.entry.id, result.entry);
+    });
+
+    // Sort by combined RRF score and return topK
+    return Array.from(scores.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, topK)
+      .map(([id]) => entries.get(id)!)
+      .filter(Boolean);
   }
 
   /**

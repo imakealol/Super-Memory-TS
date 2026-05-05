@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.5.1] - 2026-05-04
+
+### Fixed
+- **TIERED search bug**: Removed unused `QdrantMemoryResult` interface; `_similarity` field never populated by Qdrant — now correctly uses `score`
+- **Debug logs in production**: Removed 11 `console.error('[DEBUG]...')` statements from `src/memory/index.ts`, `src/memory/database.ts`, and `src/server.ts`
+- **Hardcoded version**: `src/server.ts` now reads version dynamically from `package.json` instead of hardcoded `'2.1.0'`
+- **Snapshot ENOENT errors**: `SnapshotIndex.save()` now creates parent directory with `fs.mkdir(..., { recursive: true })` before writing temp file
+- **Test cross-contamination**: Each project-index test now uses an isolated file tracker database instead of a shared global one
+- **Integration test dimension mismatch**: Tests now use `ModelManager.getDimensions()` and unique test collection names with proper cleanup
+- **Test imports**: Changed `../dist/` to `../src/` in `tests/project-index.test.ts` for actual source coverage
+
+### Added
+- **PARALLEL search strategy**: Implemented RRF (Reciprocal Rank Fusion) with `k=60` constant. Runs vector and text searches in parallel, fuses rankings for maximum recall. Added 10 comprehensive tests.
+- **Model metadata refresh**: `database.ts` now refreshes stored model metadata when initializing an existing collection
+
 ## [2.5.0] - 2026-05-01
 
 ### Changed

@@ -1,7 +1,7 @@
 import createXXHash64 from 'xxhash-wasm';
 import { promises as fs, statSync, type Dirent } from 'node:fs';
 import { glob } from 'node:fs/promises';
-import { resolve, relative } from 'path';
+import { resolve, relative, dirname } from 'path';
 import { loadGitignorePatterns } from './indexer.js';
 import { ALWAYS_EXCLUDED_PATTERNS } from './constants.js';
 
@@ -53,6 +53,7 @@ export class SnapshotIndex {
   
   async save(): Promise<void> {
     const tmpPath = this.snapshotPath + '.tmp';
+    await fs.mkdir(dirname(tmpPath), { recursive: true });
     await fs.writeFile(tmpPath, JSON.stringify(this.snapshot, null, 2));
     await fs.rename(tmpPath, this.snapshotPath);
   }

@@ -5,16 +5,18 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import { FileChunker, createChunker } from '../dist/project-index/chunker.js';
-import { ProjectWatcher, createWatcher } from '../dist/project-index/watcher.js';
-import { ProjectIndexer, createIndexer } from '../dist/project-index/indexer.js';
-import { MemoryDatabase, getDatabase, initializeDatabase } from '../dist/memory/database.js';
+import { FileChunker, createChunker } from '../src/project-index/chunker.js';
+import { ProjectWatcher, createWatcher } from '../src/project-index/watcher.js';
+import { ProjectIndexer, createIndexer } from '../src/project-index/indexer.js';
+import { MemoryDatabase, getDatabase, initializeDatabase } from '../src/memory/database.js';
 import { join } from 'path';
 import { writeFile, mkdir, rm, readFile } from 'fs/promises';
 
 // Test directory paths
 const TEST_PROJECT_DIR = join(__dirname, 'test-project');
 const TEST_DB_DIR = join(__dirname, 'test_db');
+// Qdrant URL for tests (uses file path as collection name suffix for isolation)
+const TEST_QDRANT_URL = process.env.TEST_QDRANT_URL || 'http://localhost:6333';
 
 describe('FileChunker', () => {
   let chunker: FileChunker;
@@ -401,8 +403,8 @@ describeIf('ProjectIndexer', () => {
   let indexer: ProjectIndexer;
 
   beforeAll(async () => {
-    // Initialize database
-    db = getDatabase(TEST_DB_DIR);
+    // Initialize database with Qdrant URL (not file path)
+    db = getDatabase(TEST_QDRANT_URL);
     await db.initialize();
   });
 
@@ -413,12 +415,7 @@ describeIf('ProjectIndexer', () => {
     if (db) {
       await db.close();
     }
-    // Cleanup test database
-    try {
-      await rm(TEST_DB_DIR, { recursive: true, force: true });
-    } catch (e) {
-      // Ignore
-    }
+    // No file cleanup needed - Qdrant handles data persistence
   });
 
   beforeEach(async () => {
@@ -450,7 +447,7 @@ describeIf('ProjectIndexer', () => {
       maxFileSize: 1024 * 1024,
       chunkSize: 512,
       chunkOverlap: 50,
-    }, db);
+    }, db, join(testDir, 'tracker'));
 
     await indexer.start();
 
@@ -484,7 +481,7 @@ describeIf('ProjectIndexer', () => {
       maxFileSize: 1024 * 1024,
       chunkSize: 512,
       chunkOverlap: 50,
-    }, db);
+    }, db, join(testDir, 'tracker'));
 
     await indexer.start();
     await waitForIndexerIdle(indexer);
@@ -535,7 +532,7 @@ describeIf('ProjectIndexer', () => {
       maxFileSize: 1024 * 1024,
       chunkSize: 512,
       chunkOverlap: 50,
-    }, db);
+    }, db, join(testDir, 'tracker'));
 
     await indexer.start();
     await waitForIndexerIdle(indexer);
@@ -584,7 +581,7 @@ describeIf('ProjectIndexer', () => {
       maxFileSize: 100, // Very small max size
       chunkSize: 512,
       chunkOverlap: 50,
-    }, db);
+    }, db, join(testDir, 'tracker'));
 
     await indexer.start();
     await waitForIndexerIdle(indexer);
@@ -613,7 +610,7 @@ describeIf('ProjectIndexer', () => {
       maxFileSize: 1024 * 1024,
       chunkSize: 512,
       chunkOverlap: 50,
-    }, db);
+    }, db, join(testDir, 'tracker'));
 
     let errorReceived = false;
     indexer.on('error', (err) => {
@@ -640,7 +637,7 @@ describeIf('ProjectIndexer', () => {
       maxFileSize: 1024 * 1024,
       chunkSize: 512,
       chunkOverlap: 50,
-    }, db);
+    }, db, join(testDir, 'tracker'));
 
     expect(indexer.getStats()).toEqual({
       totalFiles: 0,
@@ -680,7 +677,7 @@ describeIf('ProjectIndexer', () => {
       maxFileSize: 1024 * 1024,
       chunkSize: 512,
       chunkOverlap: 50,
-    }, db);
+    }, db, join(testDir, 'tracker'));
 
     // Verify initial root path
     expect(indexer.getRootPath()).toBe(testDir);
@@ -713,7 +710,7 @@ describeIf('ProjectIndexer', () => {
       maxFileSize: 1024 * 1024,
       chunkSize: 512,
       chunkOverlap: 50,
-    }, db);
+    }, db, join(testDir, 'tracker'));
 
     // getRootPath should work before start() is called
     expect(indexer.getRootPath()).toBe(testDir);
@@ -728,7 +725,8 @@ describeIf('Background Indexing', () => {
   let indexer: ProjectIndexer;
 
   beforeAll(async () => {
-    db = getDatabase(TEST_DB_DIR + '-background');
+    // Use Qdrant URL for background indexing test with separate collection via unique path
+    db = getDatabase(TEST_QDRANT_URL);
     await db.initialize();
   });
 
@@ -739,11 +737,7 @@ describeIf('Background Indexing', () => {
     if (db) {
       await db.close();
     }
-    try {
-      await rm(TEST_DB_DIR + '-background', { recursive: true, force: true });
-    } catch (e) {
-      // Ignore
-    }
+    // No file cleanup needed - Qdrant handles data persistence
   });
 
   beforeEach(async () => {
@@ -776,7 +770,7 @@ describeIf('Background Indexing', () => {
       maxFileSize: 1024 * 1024,
       chunkSize: 512,
       chunkOverlap: 50,
-    }, db);
+    }, db, join(testDir, 'tracker'));
 
     indexer.setProgressCallbacks({
       onFileIndexed: (filePath: string) => {
@@ -815,7 +809,7 @@ describeIf('Background Indexing', () => {
       maxFileSize: 1024 * 1024,
       chunkSize: 512,
       chunkOverlap: 50,
-    }, db);
+    }, db, join(testDir, 'tracker'));
 
     await indexer.start();
 
@@ -848,7 +842,7 @@ describeIf('Background Indexing', () => {
       maxFileSize: 1024 * 1024,
       chunkSize: 512,
       chunkOverlap: 50,
-    }, db);
+    }, db, join(testDir, 'tracker'));
 
     await indexer.start();
     await waitForIndexerIdle(indexer);
@@ -882,7 +876,7 @@ describeIf('Background Indexing', () => {
       maxFileSize: 1024 * 1024,
       chunkSize: 512,
       chunkOverlap: 50,
-    }, db);
+    }, db, join(testDir, 'tracker'));
 
     indexer.on('file-indexed', (data: { filePath: string; chunkCount: number }) => {
       indexedEvents.push(data);
@@ -910,7 +904,8 @@ describeIf('Integration: Full Indexing Pipeline', () => {
   let indexer: ProjectIndexer;
 
   beforeAll(async () => {
-    db = getDatabase(TEST_DB_DIR + '-integration');
+    // Use Qdrant URL for integration test
+    db = getDatabase(TEST_QDRANT_URL);
     await db.initialize();
   });
 
@@ -921,11 +916,7 @@ describeIf('Integration: Full Indexing Pipeline', () => {
     if (db) {
       await db.close();
     }
-    try {
-      await rm(TEST_DB_DIR + '-integration', { recursive: true, force: true });
-    } catch (e) {
-      // Ignore
-    }
+    // No file cleanup needed - Qdrant handles data persistence
   });
 
   beforeEach(async () => {
@@ -958,7 +949,7 @@ describeIf('Integration: Full Indexing Pipeline', () => {
       maxFileSize: 1024 * 1024,
       chunkSize: 512,
       chunkOverlap: 50,
-    }, db);
+    }, db, join(testDir, 'tracker'));
 
     await indexer.start();
     await waitForIndexerIdle(indexer);
