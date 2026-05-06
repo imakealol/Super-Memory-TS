@@ -1,6 +1,6 @@
 {
   "name": "@veedubin/super-memory-ts",
-  "version": "2.6.1",
+  "version": "2.6.2",
   "description": "Super-Memory MCP server with local embeddings and vector search",
   "license": "MIT",
   "repository": {
@@ -32,8 +32,7 @@
     "test": "vitest run",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build",
-    "postinstall": "node scripts/postinstall.js"
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

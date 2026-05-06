@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.6.2] - 2026-05-06
+
+### Fixed
+- **NPM install broken**: Removed `postinstall` script from `package.json`. The `scripts/` directory was not included in the published package's `"files"` array, causing `npm install` to fail with "Cannot find module 'scripts/postinstall.js'". The embedding model now downloads lazily on first use instead.
+
 ## [2.6.1] - 2026-05-06
 
 ### Added
