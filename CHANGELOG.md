@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.6.4] - 2026-05-06
+
+### Fixed
+- **Package.json path resolution**: Fixed `src/server.ts` reading `package.json` with a path that only worked in development (`../..` from `src/`) but failed when installed as a package (`../..` from `dist/` resolves to the npm scope directory, not the package root). Now tries both paths with fallback.
+- **Version fallback**: Added `?? '2.6.4'` fallback when package.json version is undefined.
+
 ## [2.6.3] - 2026-05-06
 
 ### Fixed

@@ -23,9 +23,17 @@ import { logger } from './utils/logger.js';
 import type { SearchOptions, SearchStrategy, MemorySourceType } from './memory/schema.js';
 
 // Read version from package.json
+// Try ../../ first (development: src/ or dist/ at repo root),
+// then ../ (production: dist/ inside installed package)
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const pkgPath = join(__dirname, '..', '..', 'package.json');
-const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+let pkg: { version?: string };
+try {
+  const pkgPath = join(__dirname, '..', '..', 'package.json');
+  pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+} catch {
+  const pkgPath = join(__dirname, '..', 'package.json');
+  pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+}
 
 // ==================== Job Tracking ====================
 
@@ -203,7 +211,7 @@ export class SuperMemoryServer {
     // Create MCP server
     this.server = new McpServer({
       name: 'super-memory',
-      version: pkg.version,
+      version: pkg.version ?? '2.6.3',
     });
 
     this.registerTools();
