@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.6.1] - 2026-05-06
+
+### Added
+- **GPU/CPU Auto-Fallback**: `ModelManager` now tries BGE-Large (GPU/1024-dim) first, automatically falling back to MiniLM (CPU/384-dim) if GPU is unavailable
+- **Dynamic Dimension-Aware Collections**: Collections are automatically suffixed with dimension (`memories_384` or `memories_1024`) based on the active model
+- **Query Cascading**: When querying, if the primary collection is empty or missing, automatically searches the fallback collection (opposite dimension)
+- **Mixed-Dimension Text Fallback**: For multi-collection queries, dimension-mismatched collections use Qdrant scroll + Fuse.js text search instead of being skipped entirely
+- **`scrollCollection()`**: New database method for paginated Qdrant scroll with project isolation
+- **`textSearchCollection()`**: New search method that builds temporary Fuse.js index from scrolled data
+- **`COLLECTION_NAME` env var**: Override base collection name at runtime
+
+### Changed
+- `validateModelDimensions()` now logs a warning instead of throwing an error, allowing the server to start with mismatched collections
+- `getDimensions()` predicts actual model dimensions even before the model is loaded
+- `loadModelWithFallback()` replaces direct model loading with intelligent GPU→CPU fallback
+- Integration tests updated to use `COLLECTION_NAME` env var and dimension-suffixed collections
+
+### Fixed
+- **Linter errors** in `bin/super-memory-ts.cjs`: removed unused `os` import, added `process` global declaration
+- **NPM postinstall script**: `scripts/postinstall.js` now properly included in published package
+
 ## [2.6.0] - 2026-05-05
 
 ### Added

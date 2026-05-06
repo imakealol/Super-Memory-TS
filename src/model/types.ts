@@ -26,6 +26,10 @@ export interface ModelConfig {
   useGpu: boolean;
   /** Enable GPU if available (legacy env var support) */
   gpuEnabled?: boolean;
+  /** Enable auto CPU fallback if GPU model fails to load (default: true) */
+  gpuFallback?: boolean;
+  /** The actual model ID that was loaded (may differ from modelId after fallback) */
+  activeModelId?: string;
 }
 
 /**
@@ -98,3 +102,4 @@ export const MINI_LM_DIMENSIONS = 384;
 export const ENV_PRECISION = 'BOOMERANG_PRECISION';
 export const ENV_DEVICE = 'BOOMERANG_DEVICE';
 export const ENV_USE_GPU = 'BOOMERANG_USE_GPU';
+export const ENV_GPU_FALLBACK = 'GPU_FALLBACK';

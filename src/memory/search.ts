@@ -305,6 +305,68 @@ export class MemorySearch {
   }
 
   /**
+   * Query a fallback collection when primary returns empty.
+   * Handles dimension mismatch via text fallback if needed.
+   */
+  async queryWithFallbackCollection(
+    question: string,
+    fallbackCollection: string,
+    options?: SearchOptions
+  ): Promise<MemoryEntry[]> {
+    const opts = { ...DEFAULT_SEARCH_OPTIONS, ...options };
+    const limit = opts.topK ?? 5;
+
+    // Generate embedding for the question
+    const embeddingResults = await generateEmbeddings([question]);
+    const queryVector = new Float32Array(embeddingResults[0].embedding);
+
+    // Try vector search on fallback collection
+    let results = await this.db.queryMemories(queryVector, opts, fallbackCollection);
+
+    // If empty, try text fallback
+    if (results.length === 0) {
+      logger.info(`Fallback collection '${fallbackCollection}' vector search returned empty, trying text search`);
+      results = await this.textSearchCollection(question, fallbackCollection, limit * 2);
+    }
+
+    return results.slice(0, limit);
+  }
+
+  /**
+   * Text search across a specific collection using Fuse.js.
+   * Uses scroll API to fetch all entries, then builds a temporary Fuse.js index.
+   */
+  async textSearchCollection(
+    query: string,
+    collectionName: string,
+    limit: number = 5
+  ): Promise<MemoryEntry[]> {
+    try {
+      // Fetch all entries from the collection using scroll
+      const entries = await this.db.scrollCollection(collectionName);
+
+      if (entries.length === 0) {
+        return [];
+      }
+
+      // Build Fuse.js index for these entries
+      const fuse = new Fuse(entries, FUSE_CONFIG);
+
+      // Search and return results with scores
+      const results = fuse.search(query, { limit });
+
+      return results.map(result => {
+        const entry = result.item;
+        entry.score = result.score ?? 1;
+        return entry;
+      });
+    } catch (err) {
+      logger.warn(`Text search on collection ${collectionName} failed`, { error: err instanceof Error ? err.message : String(err) });
+      return [];
+    }
+  }
+
+  /**
    * Get similar memories to a given memory entry
    */
   async getSimilar(

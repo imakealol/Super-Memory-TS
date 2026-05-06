@@ -18,44 +18,42 @@ describeIf('Qdrant Integration', () => {
   beforeAll(async () => {
     client = new QdrantClient({ url: testUrl });
 
+    // Get actual embedding dimensions from model manager
+    const modelManager = ModelManager.getInstance();
+    const embeddingDim = modelManager.getDimensions();
+    const testCollectionName = `${TEST_COLLECTION}_${embeddingDim}`;
+
     // Delete any existing test collection to start fresh
     try {
-      await client.deleteCollection(TEST_COLLECTION);
+      await client.deleteCollection(testCollectionName);
     } catch {
       // Ignore if doesn't exist
     }
 
-    // Get actual embedding dimensions from model manager to ensure collection matches
-    const modelManager = ModelManager.getInstance();
-    const embeddingDim = modelManager.getDimensions();
-
-    // Create test collection with correct dimensions
-    await client.createCollection(TEST_COLLECTION, {
-      vectors: {
-        size: embeddingDim,
-        distance: 'Cosine',
-      },
-    });
-
     // Override collection name via environment before db init
-    const originalCollection = process.env.QDRANT_COLLECTION;
-    process.env.QDRANT_COLLECTION = TEST_COLLECTION;
+    const originalCollection = process.env.COLLECTION_NAME;
+    process.env.COLLECTION_NAME = TEST_COLLECTION;
 
     db = new MemoryDatabase(testUrl);
     await db.initialize();
 
     // Restore original collection name if set
     if (originalCollection) {
-      process.env.QDRANT_COLLECTION = originalCollection;
+      process.env.COLLECTION_NAME = originalCollection;
     } else {
-      delete process.env.QDRANT_COLLECTION;
+      delete process.env.COLLECTION_NAME;
     }
   });
 
   afterAll(async () => {
-    // Clean up test collection
+    // Clean up test collections (both suffixed versions)
     try {
-      await client.deleteCollection(TEST_COLLECTION);
+      await client.deleteCollection(`${TEST_COLLECTION}_384`);
+    } catch {
+      // Ignore cleanup errors
+    }
+    try {
+      await client.deleteCollection(`${TEST_COLLECTION}_1024`);
     } catch {
       // Ignore cleanup errors
     }

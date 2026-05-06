@@ -200,11 +200,14 @@ export class MemoryDatabase {
   private client: QdrantClient;
   private qdrantUrl: string;
   private projectId?: string;
+  /** The active collection name (dimension-suffixed) */
+  private activeCollectionName: string;
 
   constructor(url: string = DEFAULT_QDRANT_URL, projectId?: string) {
     this.qdrantUrl = url;
     this.client = getClient(url);
     this.projectId = projectId;
+    this.activeCollectionName = MEMORY_TABLE_NAME; // Will be updated after model dimensions are known
   }
 
   /**
@@ -230,6 +233,7 @@ export class MemoryDatabase {
 
   /**
    * Initialize the Qdrant collection
+   * Uses dimension-suffixed collection name based on active model
    */
   async initialize(): Promise<void> {
     if (this.initialized) return;
@@ -248,13 +252,18 @@ export class MemoryDatabase {
     const modelManager = ModelManager.getInstance();
     const embeddingDim = modelManager.getDimensions();
 
+    // Set the dimension-suffixed collection name
+    // Allow COLLECTION_NAME env var to override the base name at runtime
+    const baseName = process.env.COLLECTION_NAME || MEMORY_TABLE_NAME;
+    this.activeCollectionName = `${baseName}_${embeddingDim}`;
+
     // Check if collection exists
     const collections = await withRetry(() => this.client.getCollections(), this.qdrantUrl);
-    const exists = collections.collections.some(c => c.name === MEMORY_TABLE_NAME);
+    const exists = collections.collections.some(c => c.name === this.activeCollectionName);
 
     if (!exists) {
       // Create collection with vector config
-      await withRetry(() => this.client.createCollection(MEMORY_TABLE_NAME, {
+      await withRetry(() => this.client.createCollection(this.activeCollectionName, {
         vectors: {
           size: embeddingDim,
           distance: 'Cosine',
@@ -280,6 +289,28 @@ export class MemoryDatabase {
   }
 
   /**
+   * Get the active collection name (dimension-suffixed)
+   */
+  getActiveCollectionName(): string {
+    return this.activeCollectionName;
+  }
+
+  /**
+   * Get the fallback collection name (opposite dimension)
+   */
+  getFallbackCollectionName(): string | null {
+    const dim = this.activeCollectionName.split('_').pop();
+    const baseName = process.env.COLLECTION_NAME || MEMORY_TABLE_NAME;
+    if (dim === '1024') {
+      return `${baseName}_384`;
+    }
+    if (dim === '384') {
+      return `${baseName}_1024`;
+    }
+    return null;
+  }
+
+  /**
    * Create payload indexes for filter fields
    */
   private async createPayloadIndexes(): Promise<void> {
@@ -294,7 +325,7 @@ export class MemoryDatabase {
 
     for (const { field, type } of indexFields) {
       try {
-        await this.client.createPayloadIndex(MEMORY_TABLE_NAME, {
+        await this.client.createPayloadIndex(this.activeCollectionName, {
           field_name: field,
           field_schema: type,
         });
@@ -310,7 +341,7 @@ export class MemoryDatabase {
    */
   private async ensureProjectIdIndex(): Promise<void> {
     try {
-      await this.client.createPayloadIndex(MEMORY_TABLE_NAME, {
+      await this.client.createPayloadIndex(this.activeCollectionName, {
         field_name: PAYLOAD_FIELDS.projectId,
         field_schema: 'keyword',
       });
@@ -339,7 +370,7 @@ export class MemoryDatabase {
       return toPoint(id, embeddingResults[idx].embedding, entry, timestamp, contentHash, this.projectId);
     });
 
-    await withRetry(() => this.client.upsert(MEMORY_TABLE_NAME, { points }), this.qdrantUrl);
+    await withRetry(() => this.client.upsert(this.activeCollectionName, { points }), this.qdrantUrl);
 
     return points.map(p => pointToMemoryEntry({
       ...p,
@@ -363,7 +394,7 @@ export class MemoryDatabase {
     }
 
     const point = toPoint(id, vector, input, timestamp, contentHash, this.projectId);
-    await withRetry(() => this.client.upsert(MEMORY_TABLE_NAME, { points: [point] }), this.qdrantUrl);
+    await withRetry(() => this.client.upsert(this.activeCollectionName, { points: [point] }), this.qdrantUrl);
 
     return id;
   }
@@ -372,7 +403,7 @@ export class MemoryDatabase {
    * Get a memory entry by ID
    */
   async getMemory(id: string): Promise<MemoryEntry | null> {
-    const results = await withRetry(() => this.client.retrieve(MEMORY_TABLE_NAME, {
+    const results = await withRetry(() => this.client.retrieve(this.activeCollectionName, {
       ids: [id],
       with_payload: true,
       with_vector: true,
@@ -386,7 +417,7 @@ export class MemoryDatabase {
    * Delete a memory entry by ID
    */
   async deleteMemory(id: string): Promise<void> {
-    await withRetry(() => this.client.delete(MEMORY_TABLE_NAME, {
+    await withRetry(() => this.client.delete(this.activeCollectionName, {
       points: [id],
     }), this.qdrantUrl);
   }
@@ -414,24 +445,24 @@ export class MemoryDatabase {
     const filter = { must };
 
     // Count before delete
-    const countResult = await withRetry(() => this.client.count(MEMORY_TABLE_NAME, {
+    const countResult = await withRetry(() => this.client.count(this.activeCollectionName, {
       filter,
       exact: true,
     }), this.qdrantUrl);
 
-    await withRetry(() => this.client.delete(MEMORY_TABLE_NAME, { filter }), this.qdrantUrl);
+    await withRetry(() => this.client.delete(this.activeCollectionName, { filter }), this.qdrantUrl);
 
     return countResult.count;
   }
 
   /**
    * Query memories by vector similarity
-   * @param collectionName Optional collection name (defaults to MEMORY_TABLE_NAME)
+   * @param collectionName Optional collection name (defaults to activeCollectionName)
    */
   async queryMemories(
     vector: Float32Array | number[],
     options: SearchOptions = {},
-    collectionName: string = MEMORY_TABLE_NAME
+    collectionName: string = this.activeCollectionName
   ): Promise<MemoryEntry[]> {
     const opts = { ...DEFAULT_SEARCH_OPTIONS, ...options };
     const topK = Math.min(opts.topK ?? 5, 20);
@@ -459,13 +490,19 @@ export class MemoryDatabase {
 
     const filter = conditions.length === 0 ? undefined : { must: conditions };
 
-    const results = await withRetry(() => this.client.search(collectionName, {
-      vector: queryVector,
-      limit: topK * 2,
-      filter,
-      with_payload: true,
-      with_vector: false,
-    }), this.qdrantUrl);
+    let results: Schemas['ScoredPoint'][] = [];
+    try {
+      results = await withRetry(() => this.client.search(collectionName, {
+        vector: queryVector,
+        limit: topK * 2,
+        filter,
+        with_payload: true,
+        with_vector: false,
+      }), this.qdrantUrl);
+    } catch (_err) {
+      // Collection doesn't exist or other error - return empty
+      return [];
+    }
 
     // Deduplicate by contentHash and return topK
     const seen = new Set<string>();
@@ -541,7 +578,7 @@ export class MemoryDatabase {
 
     const qdrantFilter = conditions.length === 0 ? undefined : { must: conditions };
 
-    const results = await withRetry(() => this.client.scroll(MEMORY_TABLE_NAME, {
+    const results = await withRetry(() => this.client.scroll(this.activeCollectionName, {
       filter: qdrantFilter,
       limit: 100,
       with_payload: true,
@@ -557,7 +594,7 @@ export class MemoryDatabase {
   async countMemories(): Promise<number> {
     const projectFilter = this.getProjectFilter();
     const filter = projectFilter || undefined;
-    const result = await withRetry(() => this.client.count(MEMORY_TABLE_NAME, { filter, exact: true }), this.qdrantUrl);
+    const result = await withRetry(() => this.client.count(this.activeCollectionName, { filter, exact: true }), this.qdrantUrl);
     return result.count;
   }
 
@@ -576,7 +613,7 @@ export class MemoryDatabase {
 
     const filter = { must };
 
-    const result = await withRetry(() => this.client.count(MEMORY_TABLE_NAME, {
+    const result = await withRetry(() => this.client.count(this.activeCollectionName, {
       filter,
       exact: true,
     }), this.qdrantUrl);
@@ -632,22 +669,25 @@ export class MemoryDatabase {
   }
 
   /**
-   * Validate that current model dimensions match stored metadata
+   * Validate that current model dimensions match stored metadata.
+   * Logs warning if mismatch but allows startup - query-time text fallback handles mismatched dimensions.
    */
   async validateModelDimensions(currentDimensions: number): Promise<void> {
     const stored = await this.getStoredModelMetadata();
     if (stored && stored.dimensions !== currentDimensions) {
-      const errorMsg = [
-        `Model dimension mismatch detected!`,
+      const warningMsg = [
+        `Model dimension mismatch detected (warning only, allowing startup):`,
         `  Stored dimensions: ${stored.dimensions}`,
         `  Current model dimensions: ${currentDimensions}`,
+        `  Collection: ${this.activeCollectionName}`,
         ``,
-        `To fix this, delete the Qdrant collection and restart:`,
-        `  curl -X DELETE http://localhost:6333/collections/${MEMORY_TABLE_NAME}`,
+        `Read operations will use text fallback (Qdrant scroll + Fuse.js) for mismatched collections.`,
+        `Write operations will use current model dimensions.`,
         ``,
-        `Or specify a different collection via environment variable.`,
+        `To resolve fully, delete and recreate the collection:`,
+        `  curl -X DELETE http://localhost:6333/collections/${this.activeCollectionName}`,
       ].join('\n');
-      throw new Error(errorMsg);
+      console.warn(warningMsg);
     }
   }
 
@@ -679,9 +719,39 @@ export class MemoryDatabase {
 
     // Paginate through all results
     do {
-      const result = await withRetry(() => this.client.scroll(MEMORY_TABLE_NAME, {
+      const result = await withRetry(() => this.client.scroll(this.activeCollectionName, {
         filter,
         limit: 100,
+        offset: scrollId,
+        with_payload: true,
+        with_vector: false,
+      }), this.qdrantUrl);
+
+      entries.push(...result.points.map(p => pointToMemoryEntry(p)));
+      scrollId = typeof result.next_page_offset === 'string' ? result.next_page_offset : undefined;
+    } while (scrollId);
+
+    return entries;
+  }
+
+  /**
+   * Get all memories from a specific collection using scroll API with pagination.
+   * Includes project isolation filter.
+   */
+  async scrollCollection(
+    collectionName: string = MEMORY_TABLE_NAME,
+    limit: number = 100
+  ): Promise<MemoryEntry[]> {
+    const projectFilter = this.getProjectFilter();
+    const filter = projectFilter || undefined;
+
+    const entries: MemoryEntry[] = [];
+    let scrollId: string | undefined;
+
+    do {
+      const result = await withRetry(() => this.client.scroll(collectionName, {
+        filter,
+        limit,
         offset: scrollId,
         with_payload: true,
         with_vector: false,

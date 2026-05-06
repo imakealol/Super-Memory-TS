@@ -152,18 +152,58 @@ export class MemorySystem {
   /**
    * Query memories using search strategies
    * When multiple collections are configured, uses RRF to merge results
+   * When query cascade is enabled and primary collection returns empty, tries fallback collection
    */
   async queryMemories(
     question: string,
     options?: SearchOptions
   ): Promise<MemoryEntry[]> {
-    // Single collection - use existing search
+    const cascadeEnabled = process.env.QUERY_CASCADE !== 'false'; // Default true
+
+    // Single collection - use existing search with optional cascade
     if (this.queryCollections.length === 1) {
-      return this.search.query(question, options);
+      const primaryCollection = this.queryCollections[0];
+      const primaryResults = await this.search.query(question, options);
+
+      // If primary returned results or cascade disabled, return
+      if (primaryResults.length > 0 || !cascadeEnabled) {
+        return primaryResults;
+      }
+
+      // Cascade: try fallback collection if primary returned empty
+      // Use active collection name to derive fallback
+      const dbAny = this.db as any;
+      const activeCollection = dbAny.getActiveCollectionName?.() ?? this.queryCollections[0];
+      const fallbackCollection = this.deriveFallbackCollection(activeCollection as string);
+      if (fallbackCollection && fallbackCollection !== primaryCollection) {
+        logger.info(`Primary collection '${primaryCollection}' returned no results, trying fallback '${fallbackCollection}'`);
+        const fallbackResults = await this.search.queryWithFallbackCollection(question, fallbackCollection, options);
+        if (fallbackResults.length > 0) {
+          return fallbackResults;
+        }
+      }
+
+      return primaryResults;
     }
 
     // Multiple collections - RRF merge
     return this.queryMultiCollection(question, options ?? {});
+  }
+
+  /**
+   * Derive fallback collection name from active collection name.
+   * E.g., memories_1024 -> memories_384, memories_384 -> memories_1024
+   */
+  private deriveFallbackCollection(activeCollection: string): string | null {
+    const parts = activeCollection.split('_');
+    const lastPart = parts[parts.length - 1];
+    if (lastPart === '1024') {
+      return parts.slice(0, -1).join('_') + '_384';
+    }
+    if (lastPart === '384') {
+      return parts.slice(0, -1).join('_') + '_1024';
+    }
+    return null;
   }
 
   /**
@@ -188,8 +228,9 @@ export class MemorySystem {
         if (currentDim !== null) {
           const collectionDim = await this.db.getCollectionDimension(collection);
           if (collectionDim !== null && collectionDim !== currentDim) {
-            logger.warn(`Collection ${collection} dimension mismatch (${collectionDim} vs ${currentDim}), skipping`);
-            return [];
+            // Dimension mismatch - use text fallback instead of skipping
+            logger.info(`Collection ${collection} dimension mismatch (${collectionDim} vs ${currentDim}), using text fallback`);
+            return this.search.textSearchCollection(question, collection, limit * 2);
           }
         }
         // Fetch more results per collection for RRF

@@ -20,6 +20,7 @@ import {
   ENV_PRECISION,
   ENV_DEVICE,
   ENV_USE_GPU,
+  ENV_GPU_FALLBACK,
 } from './types.js';
 import { logger } from '../utils/logger.js';
 
@@ -35,6 +36,8 @@ export class ModelManager {
   private extractor: Pipeline | null = null;
   private refCount: number = 0;
   private loadingPromise: Promise<Pipeline | null> | null = null;
+  /** The actual model ID that was loaded (may differ from config.modelId after fallback) */
+  private activeModelId: string = BGE_LARGE_MODEL_ID;
 
   private constructor(config: ModelConfig) {
     this.config = config;
@@ -58,12 +61,14 @@ export class ModelManager {
     const envPrecision = process.env[ENV_PRECISION] as ModelConfig['precision'] | undefined;
     const envDevice = process.env[ENV_DEVICE] as ComputeDevice | undefined;
     const envUseGpu = process.env[ENV_USE_GPU];
+    const gpuFallback = process.env[ENV_GPU_FALLBACK];
 
     return {
       modelId: BGE_LARGE_MODEL_ID,
       device: envDevice ?? 'auto',
       precision: envPrecision ?? 'fp32',
       useGpu: envUseGpu === 'true',
+      gpuFallback: gpuFallback !== 'false', // Default true
     };
   }
 
@@ -77,30 +82,96 @@ export class ModelManager {
     if (this.extractor) return this.extractor;
     if (this.loadingPromise) return this.loadingPromise as Promise<Pipeline>;
 
-    this.loadingPromise = this.loadModelWithRetry();
+    this.loadingPromise = this.loadModelWithFallback();
     return this.loadingPromise as Promise<Pipeline>;
   }
 
   /**
-   * Load model with retry mechanism for transient failures
+   * Load model with automatic GPU->CPU fallback.
+   * Tries BGE-Large on GPU first; if it fails and gpuFallback is enabled, falls back to MiniLM on CPU.
    */
-  private async loadModelWithRetry(retries = 3): Promise<Pipeline> {
+  private async loadModelWithFallback(): Promise<Pipeline> {
+    const gpuFallback = this.config.gpuFallback ?? true;
+
+    // If device is CPU, just load MiniLM directly
+    if (this.config.device === 'cpu' || !this.config.useGpu) {
+      return this.loadModelWithRetry(MINI_LM_MODEL_ID, 'cpu');
+    }
+
+    // Try GPU with BGE-Large first
+    try {
+      await this.loadModelWithRetry(BGE_LARGE_MODEL_ID, 'cuda');
+      if (this.extractor) return this.extractor;
+    } catch (gpuErr) {
+      if (!gpuFallback) {
+        throw gpuErr;
+      }
+      logger.warn('GPU/BGE model failed to load, falling back to CPU/MiniLM:', gpuErr instanceof Error ? gpuErr.message : String(gpuErr));
+    }
+
+    // Fallback to MiniLM on CPU
+    logger.info('Using CPU fallback model: MiniLM (384-dim)');
+    return this.loadModelWithRetry(MINI_LM_MODEL_ID, 'cpu');
+  }
+
+  /**
+   * Internal: Load a specific model with retry
+   */
+  private async loadModelWithRetry(modelId: string, device: string, retries = 3): Promise<Pipeline> {
     let lastError: Error | null = null;
 
     for (let i = 0; i < retries; i++) {
       try {
-        await this.loadModel();
+        await this.loadModelSpecific(modelId, device);
         if (this.extractor) return this.extractor;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        logger.warn(`Model load attempt ${i + 1} failed, retrying...`, lastError.message);
         if (i < retries - 1) {
           await new Promise(r => setTimeout(r, 1000 * (i + 1)));
         }
       }
     }
 
-    throw new Error(`Failed to load model after ${retries} retries: ${lastError?.message}`);
+    throw new Error(`Failed to load model '${modelId}' on '${device}' after ${retries} retries: ${lastError?.message}`);
+  }
+
+  /**
+   * Internal: Load a specific model ID on specific device (no fallback here)
+   */
+  private async loadModelSpecific(modelId: string, device: string): Promise<void> {
+    if (this.extractor) return;
+
+    this.loadingPromise = (async () => {
+      this.config.modelId = modelId;
+      this.activeModelId = modelId;
+
+      // Determine dtype based on precision
+      let dtype: 'fp32' | 'fp16' | 'q8' | 'q4' | undefined;
+      if (this.config.precision === 'fp16') {
+        dtype = 'fp16';
+      }
+
+      try {
+        // @ts-expect-error @xenova/transformers types don't fully reflect runtime API
+        this.extractor = await pipeline('feature-extraction', modelId, { dtype, device });
+      } catch (error) {
+        const errorMsg = [
+          `Failed to load embedding model '${modelId}' on device '${device}'.`,
+          `Error: ${error instanceof Error ? error.message : String(error)}`,
+          ``,
+          `To fix this, either:`,
+          `  1. Set BOOMERANG_DEVICE=cpu to use CPU-only mode`,
+          `  2. Ensure GPU drivers are properly installed for CUDA`,
+          `  3. Check that your GPU has enough VRAM for the model`,
+          `  4. Set GPU_FALLBACK=false to disable auto CPU fallback`,
+        ].join('\n');
+        throw new Error(errorMsg);
+      }
+
+      return this.extractor;
+    })();
+
+    await this.loadingPromise;
   }
 
   /**
@@ -134,61 +205,6 @@ export class ModelManager {
   }
 
   /**
-   * Load the embedding model with specified precision
-   * Throws error if loading fails - no silent fallback to prevent dimension mismatch
-   */
-  private async loadModel(): Promise<void> {
-    if (this.extractor) return;
-
-    this.loadingPromise = (async () => {
-      const modelId = this.selectModel();
-      this.config.modelId = modelId;
-
-      // Determine dtype based on precision
-      let dtype: 'fp32' | 'fp16' | 'q8' | 'q4' | undefined;
-      if (this.config.precision === 'fp16') {
-        dtype = 'fp16';
-      }
-
-      // Determine device
-      let device: string;
-      switch (this.config.device) {
-        case 'gpu':
-          device = 'cuda';
-          break;
-        case 'cpu':
-          device = 'cpu';
-          break;
-        case 'auto':
-        default:
-          device = 'auto';
-      }
-
-      try {
-        // @ts-expect-error @xenova/transformers types don't fully reflect runtime API
-        this.extractor = await pipeline('feature-extraction', modelId, { dtype, device });
-      } catch (error) {
-        // DO NOT silently fallback - dimension mismatch causes crashes
-        // Instead, throw a clear error that tells user to use CPU or fix GPU setup
-        const errorMsg = [
-          `Failed to load embedding model '${modelId}' on device '${device}'.`,
-          `Error: ${error instanceof Error ? error.message : String(error)}`,
-          ``,
-          `To fix this, either:`,
-          `  1. Set BOOMERANG_DEVICE=cpu to use CPU-only mode`,
-          `  2. Ensure GPU drivers are properly installed for CUDA`,
-          `  3. Check that your GPU has enough VRAM for the model`,
-        ].join('\n');
-        throw new Error(errorMsg);
-      }
-
-      return this.extractor;
-    })();
-
-    await this.loadingPromise;
-  }
-
-  /**
    * Unload model and trigger garbage collection
    */
   unload(): void {
@@ -197,6 +213,7 @@ export class ModelManager {
     }
     this.refCount = 0;
     this.loadingPromise = null;
+    this.activeModelId = this.config.modelId; // Reset to configured model
 
     // Suggest garbage collection for VRAM cleanup (Node.js specific)
     if (typeof globalThis.gc === 'function') {
@@ -205,15 +222,28 @@ export class ModelManager {
   }
 
   /**
-   * Get the embedding dimensions for current model
-   * Uses selectModel to determine which model will actually be used
+   * Get the embedding dimensions for current model.
+   * Uses the actually-loaded model (activeModelId), or predicts based on config if not loaded.
    */
   getDimensions(): number {
-    const actualModelId = this.selectModel();
-    if (actualModelId === BGE_LARGE_MODEL_ID) {
-      return BGE_LARGE_DIMENSIONS;
+    // If model is loaded, use active model dimensions
+    if (this.extractor) {
+      return this.activeModelId === BGE_LARGE_MODEL_ID ? BGE_LARGE_DIMENSIONS : MINI_LM_DIMENSIONS;
     }
-    return MINI_LM_DIMENSIONS;
+    // Model not loaded yet - predict which model will be loaded based on config
+    const willUseGpu = this.config.device !== 'cpu' && this.config.useGpu;
+    if (!willUseGpu && this.config.gpuFallback !== false) {
+      // Will fall back to MiniLM
+      return MINI_LM_DIMENSIONS;
+    }
+    return BGE_LARGE_DIMENSIONS;
+  }
+
+  /**
+   * Get the actual model ID that was loaded (may differ from config.modelId after fallback)
+   */
+  getActiveModelId(): string {
+    return this.activeModelId;
   }
 
   /**
@@ -221,7 +251,7 @@ export class ModelManager {
    */
   getMetadata(): ModelMetadata {
     return {
-      modelId: this.config.modelId,
+      modelId: this.activeModelId,
       dimensions: this.getDimensions(),
       device: this.config.device,
       precision: this.config.precision,

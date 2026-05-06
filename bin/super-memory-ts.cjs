@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Auto-increase heap size for large model + project indexing
-const os = require('os');
+/* global process */
 const path = require('path');
 const fs = require('fs');
 
