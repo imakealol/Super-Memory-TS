@@ -3,7 +3,7 @@
  * Tests the migration logic without requiring Qdrant connection.
  */
 
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect } from 'vitest';
 
 describe('parseArgs', () => {
   // Test helper that mimics the actual parseArgs logic

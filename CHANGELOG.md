@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.6.3] - 2026-05-06
+
+### Fixed
+- **Test suite compatibility**: Fixed `bun:test` → `vitest` in `migrate-memories.test.ts`; renamed e2e test file from `.test.ts` to `.ts` (non-test file)
+
 ## [2.6.2] - 2026-05-06
 
 ### Fixed
