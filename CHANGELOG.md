@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.6.5] - 2026-05-06
+
+### Fixed
+- **Indexer EISDIR error**: Fixed `processFile()` in `src/project-index/indexer.ts` attempting to `readFile()` on directories that slipped through the file event pipeline. Added `stats.isFile()` guard to skip non-file paths gracefully.
+
 ## [2.6.4] - 2026-05-06
 
 ### Fixed

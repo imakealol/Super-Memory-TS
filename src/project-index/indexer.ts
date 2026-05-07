@@ -566,6 +566,10 @@ export class ProjectIndexer extends EventEmitter {
     try {
       // Check file size BEFORE reading (prevent OOM)
       const stats = await stat(filePath);
+      if (!stats.isFile()) {
+        logger.debug(`Skipping non-file path: ${filePath}`);
+        return;
+      }
       const fileSizeMB = stats.size / (1024 * 1024);
       if (fileSizeMB > MAX_FILE_SIZE_MB) {
         logger.warn(`File too large (${fileSizeMB.toFixed(1)}MB), skipping: ${filePath}`);

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "createdAt": 1778112209635,
+  "files": {
+    "file_tracker.db": {
+      "hash": "d659f297e9123504",
+      "size": 12288,
+      "mtime": 1778112209633.7395,
+      "lastIndexed": 1778112209635
+    },
+    "large.ts": {
+      "hash": "3c064acb9784c244",
+      "size": 2018,
+      "mtime": 1778112209622.7393,
+      "lastIndexed": 1778112209635
+    }
+  }
+}
