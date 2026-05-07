@@ -4,7 +4,7 @@
 **Package**: `@veedubin/super-memory-ts`  
 **Repository**: https://github.com/Veedubin/Super-Memory-TS  
 **License**: MIT  
-**Current Version**: v2.5.0
+**Current Version**: v2.6.5
 
 ---
 
@@ -14,7 +14,7 @@ This project provides a local-first semantic memory system with project isolatio
 
 ---
 
-## Architecture (v2.5.0)
+## Architecture (v2.6.5)
 
 | Component | Technology | Notes |
 |-----------|------------|-------|
@@ -138,8 +138,14 @@ export BOOMERANG_PROJECT_ID=my-project   # optional, for project isolation
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **v2.6.5** | 2026-05-06 | Fixed indexer EISDIR error when directories passed through file event pipeline. Added `stats.isFile()` guard in `processFile()`. |
+| **v2.6.4** | 2026-05-06 | Fixed package.json path resolution for production installs. `join(__dirname, '..', '..')` failed when installed via npx (resolved to npm scope dir). Now tries both paths with fallback. |
+| **v2.6.3** | 2026-05-06 | Test suite fix: `bun:test` → `vitest` import in migrate-memories.test.ts; renamed e2e script to non-test file. |
+| **v2.6.2** | 2026-05-06 | Removed broken `postinstall` script. `scripts/` dir not in `"files"` array caused npm install failure. |
+| **v2.6.1** | 2026-05-06 | GPU/CPU auto-fallback, dimension-suffixed collections, query cascading, text fallback for mismatched dimensions. |
+| **v2.6.0** | 2026-05-05 | Multi-collection search with RRF fusion, QUERY_COLLECTIONS env var, dimension validation. |
+| **v2.5.1** | 2026-05-04 | Fixed TIERED search bug, removed debug logs, dynamic version, PARALLEL search strategy, test fixes. |
 | **v2.5.0** | 2026-05-01 | Code audit cleanup release. Removed glob (→ fs.promises.glob), @types/bun. Fixed always-false condition in indexer.ts. Centralized ignore patterns. |
-| **v2.4.3** | 2026-05-01 | Code audit & cleanup. Removed glob (→ fs.promises.glob), @types/bun. Fixed always-false condition in indexer.ts. Centralized ignore patterns in constants.ts. DRY refactoring. |
 | **v2.3.7** | 2026-04-29 | Connection resilience: start when Qdrant down, retry logic, `get_status` tool |
 | **v2.2.2** | 2026-04-27 | Custom path indexing via `index_project` tool, tiered search documentation |
 | **v2.2.1** | 2026-04-26 | MCP connection fix, Qdrant filter bug fix |
