@@ -1,3 +1,18 @@
+> ## ⚠️ NO LONGER IN ACTIVE DEVELOPMENT
+>
+> **This project (`Super-Memory-TS/`, TypeScript + Qdrant) is no longer in active development.**
+>
+> | Status | Replacement |
+> |--------|-------------|
+> | Memory backend | **[`memini-ai-dev`](https://github.com/...)** — successor written in Python with PostgreSQL + pgvector. Adds trust scoring, knowledge graph, tiered loading, and thought chains. Source at `~/Projects/MCP-Servers/memini-ai-dev/`. |
+> | Orchestration plugin (consumer) | **[`@veedubin/boomerang-v3`](https://www.npmjs.com/package/@veedubin/boomerang-v3)** — successor orchestration plugin that consumes `memini-ai-dev` via the `memini-ai-dev` MCP server. Source at `~/Projects/MCP-Servers/boomerang-v3/`. |
+>
+> **This directory is kept for historical reference only.** No new features, bug fixes, or NPM releases (`@veedubin/super-memory-ts`) will be made here. The Qdrant storage, BGE-Large / MiniLM embedding pipeline, and `dist/` builds are still functional if you point an older Boomerang v2 at them.
+>
+> **Migrating?** See `~/Projects/MCP-Servers/memini-ai-dev/README.md` for the migration guide. The new server exposes `memory.add`, `memory.query`, `memory.getTrustScore`, `memory.adjustTrust`, and 30+ other tools that map cleanly onto the old `save_to_memory` / `query_memory` / `search_project` interface.
+
+---
+
 # Super-Memory-TS
 
 [![npm version](https://img.shields.io/npm/v/@veedubin/super-memory-ts)](https://www.npmjs.com/package/@veedubin/super-memory-ts)
