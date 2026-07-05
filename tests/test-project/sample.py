@@ -4,7 +4,6 @@ Sample Python file for testing
 
 from dataclasses import dataclass
 from typing import Optional, List
-import json
 
 
 @dataclass
